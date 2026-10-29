@@ -19,8 +19,9 @@ retain Chromium's existing toolbar rules.
 
 ## Source integration
 
-`patch.sh` applies `patches/0001-complete-bottom-address-bar-and-tab-cards.patch`
-after Titanium's existing overrides, and stops the build if the patch cannot apply.
+`patch.sh` applies the ordered patches in `patches/` after Titanium's existing
+overrides, and stops the build if a patch cannot apply. The first patch implements
+the bottom controls/cards; the second adds [OLED black backgrounds](oled-black.md).
 The implementation was developed against Chromium **156.0.8078.73**, from the
 pinned Vanadium submodule **8ae4b1b8b014862146ff9a09dc8c6fc6e9a0a978**.
 
@@ -47,11 +48,12 @@ python3 tools/check_bottom_ui_patch.py --output-dir /tmp/titanium-ui-source
 The output directory must be new or empty. The check downloads only the affected
 files at the pinned Chromium tag, verifies their Git blob hashes, applies relevant
 Vanadium patches with Titanium branding, applies this patch, parses its XML and
-checks that the patch can be reversed. A Chromium upgrade deliberately fails the
+checks that the ordered patches can be reversed. A Chromium upgrade deliberately fails the
 hash check until the patch is ported.
 
-The `Check bottom UI` workflow also runs isolated Android RecyclerView tests using
-the production card layout manager and the same test cases registered in Chromium:
+The `Check bottom UI` workflow also runs isolated Android RecyclerView and OLED
+palette tests using production code/resources and the same test cases registered
+in Chromium:
 
 ```sh
 python3 tests/card_layout/prepare.py /tmp/titanium-ui-source

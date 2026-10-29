@@ -21,9 +21,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - name: Validate patch against pinned Chromium and Vanadium
+      - name: Validate UI patches against pinned Chromium and Vanadium
         run: python3 tools/check_bottom_ui_patch.py --output-dir "$RUNNER_TEMP/titanium-ui-source"
       - name: Prepare production card layout tests
         run: python3 tests/card_layout/prepare.py "$RUNNER_TEMP/titanium-ui-source"
-      - name: Run Android RecyclerView regression tests
+      - name: Run Android layout and OLED palette regression tests
         run: gradle --no-daemon -p tests/card_layout testDebugUnitTest --console=plain

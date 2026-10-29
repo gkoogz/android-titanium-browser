@@ -20,3 +20,16 @@ tests = (component / "junit/src/org/chromium/chrome/browser/tasks/tab_management
 tests = tests.replace("org.chromium.base.test.BaseRobolectricTestRunner", "org.robolectric.RobolectricTestRunner").replace("BaseRobolectricTestRunner.class", "RobolectricTestRunner.class")
 (test / "TabCardLayoutManagerUnitTest.java").write_text(tests)
 (project / "src/main/AndroidManifest.xml").write_text('<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>')
+
+# Exercise the production OLED overlay with Material's real attribute resolution.
+styles = source / "components/browser_ui/styles/android"
+helper = (styles / "java/src/org/chromium/components/browser_ui/styles/OledBlackTheme.java").read_text(encoding="utf-8")
+helper = helper.replace("import org.chromium.build.annotations.NullMarked;\n", "").replace("@NullMarked\n", "")
+(main / "OledBlackTheme.java").write_text(helper, encoding="utf-8")
+tests = (styles / "junit/src/org/chromium/components/browser_ui/styles/OledBlackThemeUnitTest.java").read_text(encoding="utf-8")
+tests = tests.replace("org.chromium.base.test.BaseRobolectricTestRunner", "org.robolectric.RobolectricTestRunner").replace("BaseRobolectricTestRunner.class", "RobolectricTestRunner.class")
+(test / "OledBlackThemeUnitTest.java").write_text(tests, encoding="utf-8")
+resources = project / "src/main/res/values"
+resources.mkdir(parents=True, exist_ok=True)
+for name in ("oled_black.xml", "attrs.xml"):
+    (resources / name).write_bytes((styles / "java/res/values" / name).read_bytes())

@@ -7,20 +7,23 @@ import hashlib
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import xml.etree.ElementTree as ET
 
 
 REPO = Path(__file__).resolve().parents[1]
-PATCH = REPO / "patches/0001-complete-bottom-address-bar-and-tab-cards.patch"
+PATCHES = sorted((REPO / "patches").glob("*.patch"))
 
 
 def run_git(root, *args):
-    subprocess.run(
+    result = subprocess.run(
         ["git", "-c", f"safe.directory={root.as_posix()}", "-c", "core.longpaths=true", *args],
-        cwd=root, check=True, capture_output=True, text=True,
+        cwd=root, capture_output=True, text=True,
     )
+    if result.returncode:
+        raise RuntimeError(result.stderr or result.stdout)
 
 
 def check(root):
@@ -28,15 +31,19 @@ def check(root):
         r'android_default_version_name = "([^"]+)"',
         (REPO / "vanadium/args.gn").read_text(encoding="utf-8"),
     ).group(1)
-    patch = PATCH.read_text(encoding="utf-8")
-    entries = []
-    for block in patch.split("diff --git ")[1:]:
-        header = re.match(r"a/(\S+) b/(\S+)\n", block)
-        assert header and header[1] == header[2], "Unexpected patch path"
-        path = Path(header[1])
-        assert header[1].startswith("chrome/") and ".." not in path.parts
-        old_hash = re.search(r"\nindex ([0-9a-f]+)\.\.", block).group(1)
-        entries.append((header[1], old_hash))
+    assert PATCHES, "No UI patches found"
+    entries = {}
+    for patch_file in PATCHES:
+        patch = patch_file.read_text(encoding="utf-8")
+        for block in patch.split("diff --git ")[1:]:
+            header = re.match(r"a/(\S+) b/(\S+)\n", block)
+            assert header and header[1] == header[2], "Unexpected patch path"
+            path = Path(header[1])
+            assert path.parts[0] in ("chrome", "components") and ".." not in path.parts
+            old_hash = re.search(r"\nindex ([0-9a-f]+)\.\.", block).group(1)
+            # A later patch may modify a file created or changed by an earlier patch.
+            entries.setdefault(header[1], old_hash)
+    io_root = Path("\\\\?\\" + str(root)) if sys.platform == "win32" else root
 
     def fetch(entry):
         path, expected = entry
@@ -53,15 +60,15 @@ def check(root):
                     raise
         actual = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
         assert actual.startswith(expected), f"Chromium source changed: {path} ({version})"
-        target = root / path
+        target = io_root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        list(executor.map(fetch, entries))
+        list(executor.map(fetch, entries.items()))
 
     run_git(root, "init", "-q")
-    targets = {path for path, _ in entries}
+    targets = set(entries)
     applied = []
     converted = root / ".git/ui-validation.patch"
     for upstream in sorted((REPO / "vanadium/patches").glob("*.patch")):
@@ -74,13 +81,18 @@ def check(root):
         converted.write_text(text, encoding="utf-8", newline="\n")
         run_git(root, "apply", *[f"--include={path}" for path in sorted(affected)], str(converted))
         applied.append(upstream.name)
-    run_git(root, "apply", "--check", str(PATCH))
-    run_git(root, "apply", str(PATCH))
+    for patch_file in PATCHES:
+        run_git(root, "apply", "--check", str(patch_file))
+        run_git(root, "apply", str(patch_file))
     for path in targets:
         if path.endswith((".xml", ".grd")):
-            ET.parse(root / path)
-    run_git(root, "apply", "--reverse", "--check", str(PATCH))
-    print(f"PASS: {len(entries)} files apply to Chromium {version}; XML parses; reverse check passes")
+            ET.parse(io_root / path)
+    # Reverse in a temporary index so the validated output tree stays available to tests.
+    run_git(root, "add", ".")
+    for patch_file in reversed(PATCHES):
+        run_git(root, "apply", "--cached", "--reverse", "--check", str(patch_file))
+        run_git(root, "apply", "--cached", "--reverse", str(patch_file))
+    print(f"PASS: {len(PATCHES)} patches, {len(entries)} files apply to Chromium {version}; XML parses; reverse checks pass")
     print(f"Relevant Vanadium patches checked: {', '.join(applied)}")
     print(f"Patched sources: {root}")
 
