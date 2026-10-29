@@ -187,4 +187,11 @@ if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.REGULAR) {/|| mSupportedProfileType == SupportedProfileType.REGULAR || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 
+# Apply maintainable UI patches after Titanium's existing source overrides.
+# Fail closed if a Chromium update changes a hunk instead of building a partial UI.
+for patch in "$SCRIPT_DIR"/patches/*.patch; do
+    git apply --check "$patch" || exit 1
+    git apply "$patch" || exit 1
+done
+
 export PATCHED=1

@@ -1,0 +1,29 @@
+name: Check bottom UI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  bottom-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Validate patch against pinned Chromium and Vanadium
+        run: python3 tools/check_bottom_ui_patch.py --output-dir "$RUNNER_TEMP/titanium-ui-source"
+      - name: Prepare production card layout tests
+        run: python3 tests/card_layout/prepare.py "$RUNNER_TEMP/titanium-ui-source"
+      - name: Run Android RecyclerView regression tests
+        run: gradle --no-daemon -p tests/card_layout testDebugUnitTest --console=plain

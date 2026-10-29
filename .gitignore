@@ -7,3 +7,10 @@ keys/
 
 *.aab
 *.apk
+
+tests/card_layout/.gradle/
+tests/card_layout/build/
+tests/card_layout/src/
+tests/card_layout/local.properties
+tests/card_layout/__pycache__/
+tools/__pycache__/
