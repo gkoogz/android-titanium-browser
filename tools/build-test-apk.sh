@@ -23,6 +23,11 @@ if [[ "$build_root" == / || "$build_root" == "$HOME" || "$build_root" == "$sourc
     exit 1
 fi
 export TITANIUM_BUILD_ROOT="$build_root"
+# Vanadium's hooks also commit patches in dependency repositories. A clean
+# container has no global Git identity, and repository-local config is not
+# inherited by those dependencies. Keep the identity scoped to this build.
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Titanium test builder}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-titanium-test@localhost}"
 build_repo="$build_root/repo"
 src="$build_repo/chromium/src"
 
