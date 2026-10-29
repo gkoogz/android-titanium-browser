@@ -1,5 +1,11 @@
 # Titanium Browser for Android
 
+> **This fork's SteamOS build handoff:** start with
+> [AGENTS.md](AGENTS.md) and [the complete build instructions](docs/steam-build-handoff.md).
+> The Kiwi-style bottom controls, optional tab cards and OLED setting are on
+> `codex/kiwi-bottom-controls-and-tab-cards` ([PR #1](https://github.com/gkoogz/android-titanium-browser/pull/1)).
+> Full APK compilation and phone acceptance are still pending.
+
 [![Stars](https://img.shields.io/github/stars/jqssun/android-titanium-browser?label=Stars&logo=GitHub)](https://github.com/jqssun/android-titanium-browser)
 [![GitHub](https://img.shields.io/github/downloads/jqssun/android-titanium-browser/total?label=GitHub&logo=GitHub)](https://github.com/jqssun/android-titanium-browser/releases)
 [![license](https://img.shields.io/badge/License-GPLv2-blue.svg)](https://github.com/jqssun/android-titanium-browser/blob/main/LICENSE)
