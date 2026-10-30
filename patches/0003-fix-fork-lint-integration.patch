@@ -47,3 +47,25 @@ index 2a4891d78241b09461e09b518797539c7afab4ea..c5365c27143745b029e6c10a068e4554
          return extras.getInt(PasswordManagerHelper.MANAGE_PASSWORDS_REFERRER);
      }
  
+diff --git a/chrome/browser/password_manager/android/java/src/org/chromium/chrome/browser/password_manager/PasswordManagerHelper.java b/chrome/browser/password_manager/android/java/src/org/chromium/chrome/browser/password_manager/PasswordManagerHelper.java
+index 3512dc3210343ecfb4707e8f82d4c98f9ada8f91..5bb0263dfbd9c5f799e67344d31f549e41392d07 100644
+--- a/chrome/browser/password_manager/android/java/src/org/chromium/chrome/browser/password_manager/PasswordManagerHelper.java
++++ b/chrome/browser/password_manager/android/java/src/org/chromium/chrome/browser/password_manager/PasswordManagerHelper.java
+@@ -450,7 +450,16 @@
+             Context context,
+             @Nullable SettingsCustomTabLauncher settingsCustomTabLauncher) {
+         if (PasswordsPreferenceHelper.shouldUseLocalPasswordBackend()) {
++            // The local settings page uses ManagePasswordsReferrer, not PasswordCheckReferrer.
++            @ManagePasswordsReferrer int settingsReferrer =
++                    switch (referrer) {
++                        case PasswordCheckReferrer.SAFETY_CHECK -> ManagePasswordsReferrer.SAFETY_CHECK;
++                        case PasswordCheckReferrer.LEAK_DIALOG,
++                                PasswordCheckReferrer.PHISHED_WARNING_DIALOG ->
++                                ManagePasswordsReferrer.PASSWORD_BREACH_DIALOG;
++                        default -> ManagePasswordsReferrer.CHROME_SETTINGS;
++                    };
+             PasswordsPreferenceHelper.navigateToLocalPasswordManagerBackendSetting(
+-                    context, referrer);
++                    context, settingsReferrer);
+             return;
+         }
