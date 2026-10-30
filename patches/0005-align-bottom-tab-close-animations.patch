@@ -1,0 +1,198 @@
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+index 337f3475ff909c0f644fba91464573d3ab84cc60..a52d2e73df4a7b0809cc8cc292b56ee142a7f333 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+@@ -66,7 +66,9 @@
+ 
+     @Override
+     public boolean supportsPredictiveItemAnimations() {
+-        return !mStacked && super.supportsPredictiveItemAnimations();
++        // GridLayoutManager's predictive pass puts disappearing views back at the top.
++        // Keep their actual bounds for the normal shrink/move animations instead.
++        return !mStacked && !mBottomAnchored && super.supportsPredictiveItemAnimations();
+     }
+ 
+     @Override
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e5f7b60d49ac8fe137e0877c0ea03c4c7f5f2f0c 100644
+--- /dev/null
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java
+@@ -0,0 +1,165 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.tasks.tab_management;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertNotNull;
++import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_TYPE;
++import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.TAB;
++import static org.chromium.chrome.browser.tasks.tab_management.TabProperties.USE_SHRINK_CLOSE_ANIMATION;
++
++import android.app.Activity;
++import android.graphics.Rect;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.TextView;
++
++import androidx.recyclerview.widget.RecyclerView;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.robolectric.Robolectric;
++import org.robolectric.annotation.Config;
++import org.robolectric.annotation.LooperMode;
++
++import org.chromium.base.supplier.ObservableSuppliers;
++import org.chromium.base.test.BaseRobolectricTestRunner;
++import org.chromium.ui.modelutil.PropertyKey;
++import org.chromium.ui.modelutil.PropertyModel;
++import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
++
++import java.util.ArrayList;
++
++/** Checks the real shrink animator against each card's on-screen layout bounds. */
++@RunWith(BaseRobolectricTestRunner.class)
++@Config(manifest = Config.NONE, sdk = {29, 36})
++@LooperMode(LooperMode.Mode.PAUSED)
++public class TabCardCloseAnimationUnitTest {
++    private RecyclerView mView;
++    private TabCardLayoutManager mManager;
++    private final ArrayList<Integer> mIds = new ArrayList<>();
++    private int mHeight = 1000;
++
++    private static Rect visualBounds(View view) {
++        int left = Math.round(view.getX());
++        int top = Math.round(view.getY());
++        return new Rect(left, top, left + view.getWidth(), top + view.getHeight());
++    }
++
++    private static class RecordingAnimator extends TabListItemAnimator {
++        Rect removalBounds;
++        Rect startingBounds;
++
++        RecordingAnimator() {
++            super(ObservableSuppliers.createNonNull(false), false);
++        }
++
++        @Override
++        public boolean animateRemove(RecyclerView.ViewHolder holder) {
++            removalBounds = visualBounds(holder.itemView);
++            return super.animateRemove(holder);
++        }
++
++        @Override
++        public void onRemoveStarting(RecyclerView.ViewHolder holder) {
++            startingBounds = visualBounds(holder.itemView);
++        }
++    }
++
++    @Before
++    public void setUp() {
++        Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
++        mView = new RecyclerView(activity);
++        mManager = new TabCardLayoutManager(activity, 2);
++        mManager.setCardHeight(400);
++        mView.setLayoutManager(mManager);
++        mView.setItemAnimator(null);
++        mView.addItemDecoration(mManager.getOverlapDecoration(position -> true));
++        mView.setAdapter(new RecyclerView.Adapter<SimpleRecyclerViewAdapter.ViewHolder>() {
++            @Override
++            public SimpleRecyclerViewAdapter.ViewHolder onCreateViewHolder(ViewGroup parent, int type) {
++                TextView view = new TextView(activity);
++                view.setLayoutParams(new RecyclerView.LayoutParams(
++                        ViewGroup.LayoutParams.MATCH_PARENT, 400));
++                return new SimpleRecyclerViewAdapter.ViewHolder(view, (model, v, key) -> {});
++            }
++
++            @Override
++            public void onBindViewHolder(SimpleRecyclerViewAdapter.ViewHolder holder, int position) {
++                ((TextView) holder.itemView).setText("Tab " + mIds.get(position));
++                holder.model = new PropertyModel.Builder(
++                        new PropertyKey[] {CARD_TYPE, USE_SHRINK_CLOSE_ANIMATION})
++                        .with(CARD_TYPE, TAB)
++                        .with(USE_SHRINK_CLOSE_ANIMATION, true)
++                        .build();
++            }
++
++            @Override
++            public int getItemCount() {
++                return mIds.size();
++            }
++        });
++        activity.setContentView(mView);
++    }
++
++    private void layout() {
++        mView.requestLayout();
++        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++                View.MeasureSpec.makeMeasureSpec(mHeight, View.MeasureSpec.EXACTLY));
++        mView.layout(0, 0, 360, mHeight);
++    }
++
++    private void populate(int count, boolean stacked, boolean bottom) {
++        mManager.setSpanCount(stacked ? 1 : 2);
++        mManager.setPresentation(stacked, bottom);
++        for (int i = 0; i < count; ++i) mIds.add(i);
++        mView.getAdapter().notifyDataSetChanged();
++        layout();
++    }
++
++    private void closeAndCheck(int position) {
++        View closing = mManager.findViewByPosition(position);
++        assertNotNull(closing);
++        Rect expected = visualBounds(closing);
++        RecordingAnimator animator = new RecordingAnimator();
++        mView.setItemAnimator(animator);
++        mIds.remove(position);
++        mView.getAdapter().notifyItemRemoved(position);
++        layout();
++        assertEquals("Removal must use the closing tab's visible bounds", expected, animator.removalBounds);
++        animator.runPendingAnimations();
++        assertEquals("Shrink must start at the closing tab", expected, animator.startingBounds);
++        animator.endAnimations();
++        mView.setItemAnimator(null);
++    }
++
++    @Test public void bottomGridCloseFirst() { populate(3, false, true); closeAndCheck(0); }
++    @Test public void bottomGridCloseSecondColumn() { populate(3, false, true); closeAndCheck(1); }
++    @Test public void bottomGridCloseLastRow() { populate(3, false, true); closeAndCheck(2); }
++    @Test public void bottomGridCloseSameRowCount() { populate(4, false, true); closeAndCheck(2); }
++    @Test public void bottomGridCloseOnlyTab() { populate(1, false, true); closeAndCheck(0); }
++    @Test public void bottomCardsCloseFirst() { populate(3, true, true); closeAndCheck(0); }
++    @Test public void bottomCardsCloseMiddle() { populate(3, true, true); closeAndCheck(1); }
++    @Test public void bottomCardsCloseLast() { populate(3, true, true); closeAndCheck(2); }
++    @Test public void topGridCloseFirst() { populate(3, false, false); closeAndCheck(0); }
++    @Test public void paddedBottomGrid() {
++        mView.setPadding(0, 20, 0, 30);
++        populate(3, false, true);
++        closeAndCheck(0);
++    }
++    @Test public void scrolledLongGrid() {
++        populate(20, false, true);
++        mView.scrollBy(0, 900);
++        closeAndCheck(mManager.findFirstVisibleItemPosition());
++    }
++    @Test public void repeatedCloses() {
++        populate(4, false, true);
++        closeAndCheck(0);
++        closeAndCheck(1);
++        closeAndCheck(0);
++        closeAndCheck(0);
++    }
++}
+diff --git a/chrome/android/junit/BUILD.gn b/chrome/android/junit/BUILD.gn
+index 71aeb298e87f6fb95635301e7d6f2952978c36ba..471ec26c3babc7df172714e18ee73c9f2c671bc0 100644
+--- a/chrome/android/junit/BUILD.gn
++++ b/chrome/android/junit/BUILD.gn
+@@ -1547,6 +1547,7 @@
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorShareActionUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorUngroupActionUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java",
++      "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediatorUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSearchOverlayCoordinatorUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabStripSnapshotterTest.java",

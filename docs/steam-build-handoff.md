@@ -53,17 +53,19 @@ Implementation and acceptance details: [bottom UI](bottom-ui.md), [OLED](oled-bl
 
 ## Current evidence and remaining work
 
-- Two ordered patches in `patches/` are applied by `patch.sh` after Titanium's
+- Ordered patches in `patches/` are applied by `patch.sh` after Titanium's
   existing transformations. They fail closed if a hunk no longer matches.
 - Vanadium is pinned to `8ae4b1b8b014862146ff9a09dc8c6fc6e9a0a978`;
   its Chromium version is `156.0.8078.73`.
 - The affected-source patch checks and 15 isolated Android/Robolectric tests
   passed for the implementation commit. They check the real card manager and
   OLED resources; they are **not a complete Chromium build**.
-- **No complete APK has yet been built or installed.** Full compilation may
-  reveal integration errors. Fix them, keep the patches maintainable, and update
-  the branch with the actual final source. Do not claim live UI success until
-  it has been observed on Android.
+- [Beta 0.1](https://github.com/gkoogz/android-titanium-browser/releases/tag/v0.1)
+  was compiled, installed and tested on the phone. Later changes still require
+  complete compilation and device checks. Keep patches maintainable, record the
+  exact source and checksum, and distinguish observed device results from pending
+  acceptance checks. The Steam Deck's task-local `BUILD-NOTES.md` and artifact
+  verification reports contain the actual commands and observations.
 - The authorized test phone is a Moto G Stylus (2025), ARM64, Android API 36.
   USB debugging was authorized on the Windows PC. SteamOS needs its own USB
   connection/authorization, or transfer the APK back to Windows for installation.

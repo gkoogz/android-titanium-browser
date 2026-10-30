@@ -6,6 +6,8 @@ This fork extends two existing settings on phones:
   suggestion is nearest the address field and other suggestions extend upward.
   The tab switcher puts its search field at the bottom, with new-tab, pane and
   menu controls above it. Short tab lists align with the bottom controls.
+  On the home page, the utility toolbar sits at the bottom, the search field
+  directly above it, and the remaining short page contents above the search field.
 * **Tabs and tab groups → Tab switcher layout:** **Grid** (default) or **Cards**.
   Cards use one wide column of overlapping previews. Tab identity, thumbnails,
   close actions, groups and transition animations use the existing tab model and
@@ -13,15 +15,17 @@ This fork extends two existing settings on phones:
   phone switcher without restarting the browser.
 
 The group dialog, selection editor, tablets, automotive and XR keep their existing
-layouts. The unfocused NTP fakebox retains Chromium's placement; focusing it moves
-editing to the configured bottom address bar. Find in page and picture-in-picture
-retain Chromium's existing toolbar rules.
+layouts. The home page follows the address-bar preference, including while editing.
+Long home-page contents remain scrollable, and Top mode restores the original
+ordering. Find in page and picture-in-picture retain Chromium's existing toolbar rules.
 
 ## Source integration
 
 `patch.sh` applies the ordered patches in `patches/` after Titanium's existing
 overrides, and stops the build if a patch cannot apply. The first patch implements
 the bottom controls/cards; the second adds [OLED black backgrounds](oled-black.md).
+Later patches repair integration and lifecycle issues, align close animations,
+and apply Bottom mode to the home page.
 The implementation was developed against Chromium **156.0.8078.73**, from the
 pinned Vanadium submodule **8ae4b1b8b014862146ff9a09dc8c6fc6e9a0a978**.
 
@@ -35,7 +39,15 @@ height, including navigation insets, in the pane host.
 Cards retain GridLayoutManager's tab integration and use one span with negative top
 decoration insets between adjacent tab cards. Message cards retain their full height.
 The last preview retains its full bottom edge after closing a tab. Predictive layout
-is disabled in Cards mode; the existing tab item and switcher animations remain.
+is disabled in Cards mode and bottom-aligned grids. This prevents the predictive
+pass from moving a disappearing card back to the top before its shrink animation;
+the existing shrink, move and switcher animations remain.
+
+The home page puts its fake search field after the other page elements and fills
+short pages to the scroll viewport, using bottom gravity. It retains status-bar
+insets, tracks viewport resizing, and restores the original order, padding and
+minimum height when Top mode is selected. Preference and viewport observers are
+removed when the view detaches.
 
 ## Automated validation
 
@@ -67,17 +79,22 @@ standard Robolectric runner; the production layout and scrolling code are unchan
 It covers overlap, empty/single/long lists, scroll gestures, switching back to Grid,
 message cards, bottom padding, smaller viewports, and closing first/middle/last tabs.
 
-Toolbar and suggestion-positioning regression tests are updated in the Chromium
-patch, but the full Chromium test suite has not been run locally. The standalone
-tests do not verify native browser startup, URL editing, thumbnails or transitions.
+Chromium's test suite also registers real-animator coordinate checks and home-page
+ordering, inset, scrolling, keyboard-viewport and preference regression cases.
+The focused animation, home-page, binder and toolbar suites passed 196 cases on
+Android API 29 and 36. This is a subset of Chromium's tests. The standalone Gradle
+harness does not verify native startup, URL editing, thumbnails or transitions.
 
 ## Android acceptance before release
 
-A full Titanium APK build and live Android checks remain required. Use the existing
-Build workflow or the documented Linux build with your own signing configuration.
+After changes, build the complete APK and repeat the live Android checks. Use the
+documented Linux test build or the existing release workflow with your own signing
+configuration.
 
 1. With Address bar set to Bottom, focus a page URL, type, choose a suggestion and
    dismiss the keyboard. Repeat in incognito and from the NTP fakebox.
+   On the home page, verify bottom utility controls, search above them and page
+   content above search; repeat after resizing and after switching back to Top.
 2. Check floating keyboards, keyboard height changes, gesture and three-button
    navigation, portrait/landscape and split-screen. Confirm the field stays reachable
    and suggestions do not cover it or double-subtract the keyboard height.
@@ -86,6 +103,8 @@ Build workflow or the documented Linux build with your own signing configuration
 4. Change Grid/Cards while the switcher is warm. Check opening, selecting, swiping
    closed and undoing tabs, especially the first and last cards. Check thumbnails,
    tab groups, drag-to-group, archive/message cards and transition animations.
+   The disappearing preview must shrink at the position of the actual closed tab,
+   including the second grid column and when a removal changes the number of rows.
 5. Restore Address bar → Top and Grid. Check TalkBack, keyboard navigation and large
    text. Compare tablet, automotive and XR behavior with the upstream build.
 

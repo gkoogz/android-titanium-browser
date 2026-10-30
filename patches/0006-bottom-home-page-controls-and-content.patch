@@ -1,0 +1,509 @@
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ntp/NewTabPageLayout.java b/chrome/android/java/src/org/chromium/chrome/browser/ntp/NewTabPageLayout.java
+index c6fca8526d01d2fde3aaf8a824071b08404ca385..33718d88db53750930458c44a0ef9bc1ae8fdd19 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/ntp/NewTabPageLayout.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/ntp/NewTabPageLayout.java
+@@ -5,16 +5,26 @@
+ package org.chromium.chrome.browser.ntp;
+ 
+ import android.content.Context;
++import android.content.SharedPreferences;
+ import android.util.AttributeSet;
++import android.view.Gravity;
+ import android.view.View;
+ import android.view.ViewGroup;
++import android.view.ViewParent;
+ import android.view.ViewStub;
+ import android.widget.LinearLayout;
+-
++import android.widget.ScrollView;
++
++import androidx.recyclerview.widget.RecyclerView;
++
++import org.chromium.base.ContextUtils;
+ import org.chromium.base.Log;
+ import org.chromium.build.annotations.NullMarked;
+ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.R;
++import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
++import org.chromium.chrome.browser.toolbar.ToolbarPositionController;
++import org.chromium.chrome.browser.toolbar.settings.AddressBarPreference;
+ import org.chromium.chrome.browser.ui.theme.ChromeSemanticColorUtils;
+ 
+ /**
+@@ -43,10 +53,29 @@
+ 
+     private @Nullable Delegate mDelegate;
+     private @Nullable View mSearchBoxView;
++    private boolean mBottomAnchored;
++    private int mNormalTopInset;
++    private int mNormalMinimumHeight;
++    private int mNormalGravity;
++    private int mSearchBoxNormalIndex = -1;
++    private @Nullable View mViewport;
++    private @Nullable View mNoLogoSpacer;
++    private float mNormalSpacerWeight;
++    private final View.OnLayoutChangeListener mViewportLayoutObserver =
++            (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
++                if (mBottomAnchored && bottom - top != oldBottom - oldTop) requestLayout();
++            };
++    private final SharedPreferences.OnSharedPreferenceChangeListener mToolbarPreferenceObserver =
++            (preferences, key) -> {
++                if (ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED.equals(key)) {
++                    updateToolbarPosition();
++                }
++            };
+ 
+     /** Constructor for inflating from XML. */
+     public NewTabPageLayout(Context context, AttributeSet attrs) {
+         super(context, attrs);
++        mNormalTopInset = getPaddingTop();
+     }
+ 
+     @Override
+@@ -70,6 +99,15 @@
+             mDelegate.onMeasure(width);
+         }
+ 
++        if (mBottomAnchored) {
++            updateBottomPlacement();
++            updateViewport();
++            int available = mViewport == null ? 0
++                    : Math.max(mViewport.getHeight(), mViewport.getMeasuredHeight())
++                            - mViewport.getPaddingTop() - mViewport.getPaddingBottom();
++            int minimumHeight = Math.max(mNormalMinimumHeight, available);
++            if (getMinimumHeight() != minimumHeight) setMinimumHeight(minimumHeight);
++        }
+         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+     }
+ 
+@@ -79,6 +117,94 @@
+         if (mDelegate != null) {
+             mDelegate.onAttachedToWindow();
+         }
++        ContextUtils.getAppSharedPreferences().registerOnSharedPreferenceChangeListener(
++                mToolbarPreferenceObserver);
++        updateToolbarPosition();
++    }
++
++    @Override
++    protected void onDetachedFromWindow() {
++        ContextUtils.getAppSharedPreferences().unregisterOnSharedPreferenceChangeListener(
++                mToolbarPreferenceObserver);
++        if (mViewport != null) {
++            mViewport.removeOnLayoutChangeListener(mViewportLayoutObserver);
++            mViewport = null;
++        }
++        super.onDetachedFromWindow();
++    }
++
++    private void updateToolbarPosition() {
++        setBottomAnchored(ToolbarPositionController.isToolbarPositionCustomizationEnabled(
++                getContext(), false) && !AddressBarPreference.isToolbarConfiguredToShowOnTop());
++    }
++
++    /** Applies the same phone toolbar preference to the home-page search/content stack. */
++    void setBottomAnchored(boolean bottomAnchored) {
++        if (mBottomAnchored == bottomAnchored) return;
++        if (bottomAnchored) {
++            mNormalGravity = getGravity();
++            mNormalMinimumHeight = getMinimumHeight();
++        }
++        mBottomAnchored = bottomAnchored;
++        setGravity(bottomAnchored ? Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL : mNormalGravity);
++        if (!bottomAnchored) setMinimumHeight(mNormalMinimumHeight);
++        setTopInset(mNormalTopInset);
++        updateBottomPlacement();
++        for (int i = 0; i < getChildCount(); ++i) getChildAt(i).setTranslationY(0f);
++        requestLayout();
++    }
++
++    /** Keeps the status-bar inset while removing space reserved for a top toolbar in Bottom mode. */
++    void setTopInset(int topInset) {
++        mNormalTopInset = topInset;
++        int padding = mBottomAnchored
++                ? Math.max(0, topInset - getResources().getDimensionPixelSize(
++                        R.dimen.toolbar_height_no_shadow)) : topInset;
++        setPaddingRelative(getPaddingStart(), padding, getPaddingEnd(), getPaddingBottom());
++    }
++
++    private void updateBottomPlacement() {
++        if (mSearchBoxView != null && mSearchBoxView.getParent() == this) {
++            if (mBottomAnchored) {
++                if (indexOfChild(mSearchBoxView) != getChildCount() - 1) {
++                    bringChildToFront(mSearchBoxView);
++                }
++            } else if (mSearchBoxNormalIndex >= 0
++                    && indexOfChild(mSearchBoxView) != mSearchBoxNormalIndex) {
++                View searchBox = mSearchBoxView;
++                removeView(searchBox);
++                addView(searchBox, Math.min(mSearchBoxNormalIndex, getChildCount()));
++            }
++        }
++        View spacer = findViewById(R.id.no_search_logo_spacer);
++        if (spacer != null) {
++            LayoutParams params = (LayoutParams) spacer.getLayoutParams();
++            if (mBottomAnchored && mNoLogoSpacer == null) {
++                mNoLogoSpacer = spacer;
++                mNormalSpacerWeight = params.weight;
++            }
++            float weight = mBottomAnchored ? 0f : mNormalSpacerWeight;
++            if (mNoLogoSpacer != null && params.weight != weight) {
++                params.weight = weight;
++                spacer.setLayoutParams(params);
++            }
++        }
++    }
++
++    private void updateViewport() {
++        View viewport = null;
++        for (ViewParent parent = getParent(); parent instanceof View view;
++                parent = view.getParent()) {
++            if (viewport == null) viewport = view;
++            if (view instanceof RecyclerView || view instanceof ScrollView) {
++                viewport = view;
++                break;
++            }
++        }
++        if (mViewport == viewport) return;
++        if (mViewport != null) mViewport.removeOnLayoutChangeListener(mViewportLayoutObserver);
++        mViewport = viewport;
++        if (mViewport != null) mViewport.addOnLayoutChangeListener(mViewportLayoutObserver);
+     }
+ 
+     @Override
+@@ -106,8 +232,11 @@
+     }
+ 
+     /** Sets the search box view. */
+-    public void setSearchBoxView(View view) {
++    public void setSearchBoxView(@Nullable View view) {
++        if (mSearchBoxView == view) return;
+         mSearchBoxView = view;
++        mSearchBoxNormalIndex = view == null ? -1 : indexOfChild(view);
++        updateBottomPlacement();
+     }
+ 
+     /**
+@@ -116,6 +245,7 @@
+      * reduce the number of visual elements in motion.
+      */
+     void setTranslationYOfFakeboxAndAbove(float translationY) {
++        if (mBottomAnchored) translationY = 0f;
+         for (int i = 0; i < getChildCount(); i++) {
+             View view = getChildAt(i);
+             view.setTranslationY(translationY);
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinder.java b/chrome/android/java/src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinder.java
+index 3ee3d69b2b5d850261173da86d1326c3d28829fc..d8f4f133eada694b69877cba606c07b3ffa3ed87 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinder.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinder.java
+@@ -48,11 +48,7 @@
+         } else if (SEARCH_BOX_VIEW == key) {
+             newTabPageLayout.setSearchBoxView(model.get(SEARCH_BOX_VIEW));
+         } else if (TOP_INSET_PX == key) {
+-            newTabPageLayout.setPaddingRelative(
+-                    newTabPageLayout.getPaddingStart(),
+-                    model.get(TOP_INSET_PX),
+-                    newTabPageLayout.getPaddingEnd(),
+-                    newTabPageLayout.getPaddingBottom());
++            newTabPageLayout.setTopInset(model.get(TOP_INSET_PX));
+         } else if (TRANSITION_Y == key) {
+             newTabPageLayout.setTranslationYOfFakeboxAndAbove(model.get(TRANSITION_Y));
+         }
+diff --git a/chrome/android/junit/src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinderUnitTest.java b/chrome/android/junit/src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinderUnitTest.java
+index dc84717adce40e2a336deb0141b2f2f7ec212549..028010c265b91825fc9666a824b8321ee58caae7 100644
+--- a/chrome/android/junit/src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinderUnitTest.java
++++ b/chrome/android/junit/src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinderUnitTest.java
+@@ -57,13 +57,9 @@
+ 
+     @Test
+     public void testTopInset() {
+-        when(mView.getPaddingStart()).thenReturn(10);
+-        when(mView.getPaddingEnd()).thenReturn(20);
+-        when(mView.getPaddingBottom()).thenReturn(30);
+-
+         int topInsetPx = 40;
+         mModel.set(TOP_INSET_PX, topInsetPx);
+-        verify(mView).setPaddingRelative(10, topInsetPx, 20, 30);
++        verify(mView).setTopInset(topInsetPx);
+     }
+ 
+     @Test
+diff --git a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionController.java b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionController.java
+index 8b44de9f0b2811561c71291e316ed901e2976f06..e1d412b32f410030efd02b93c1c0b78cef8b787c 100644
+--- a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionController.java
++++ b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionController.java
+@@ -675,10 +675,8 @@
+             boolean doesUserPreferTopToolbar,
+             @ControlsPosition int currentPosition) {
+         @ControlsPosition int newControlsPosition;
+-        // Keep the user's bottom address bar in reach throughout an editing session,
+-        // including sessions started from the NTP fakebox.
+-        if ((ntpShowing && !isOmniboxFocused)
+-                || tabSwitcherShowing
++        // Home-page utility controls follow the same placement preference as the omnibox.
++        if (tabSwitcherShowing
+                 || isFindInPageShowing
+                 || (isPictureInPictureShowing
+                         && ChromeFeatureList.sPictureInPictureMovesToolbarAndroid.isEnabled())
+diff --git a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionControllerTest.java b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionControllerTest.java
+index f4b5b47db09146b4604cf632ed8c63346c40c292..803de31f9acad6cd9497afa5081320a868214802 100644
+--- a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionControllerTest.java
++++ b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionControllerTest.java
+@@ -517,12 +517,12 @@
+ 
+     @Test
+     @Config(qualifiers = "sw400dp")
+-    public void testUpdatePositionChangesWithNtpState() {
++    public void testNtpVisibilityKeepsBottomPreference() {
+         setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+         assertControlsAtBottom();
+ 
+         mIsNtpShowing.set(true);
+-        assertControlsAtTop();
++        assertControlsAtBottom();
+ 
+         mIsNtpShowing.set(false);
+         assertControlsAtBottom();
+@@ -670,7 +670,7 @@
+                         ControlsPosition.BOTTOM));
+ 
+         assertEquals(
+-                StateTransition.SNAP_TO_TOP,
++                StateTransition.NONE,
+                 ToolbarPositionController.calculateStateTransition(
+                         prefStateChanged,
+                         true,
+@@ -921,15 +921,17 @@
+ 
+         // By default, Toolbar should be anchored on top.
+         setUserToolbarAnchorPreference(/* showToolbarOnTop= */ null);
++        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+         assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+ 
+-        // When the user explicitly asks for bottom toolbar, NTP should still show that toolbar on
+-        // top.
+-        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
+-        assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+-
+-        // ... NTP always shows toolbar on top.
++        // The home-page utility toolbar follows the explicit bottom preference.
++        setUserToolbarAnchorPreference(/* showToolbarOnTop= */ false);
++        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
++        assertFalse(ToolbarPositionController.shouldShowToolbarOnTop(tab));
++
++        // Explicit Top mode restores the standard home-page placement.
+         setUserToolbarAnchorPreference(/* showToolbarOnTop= */ true);
++        ToolbarPositionController.resetCachedToolbarConfigurationForTesting();
+         assertTrue(ToolbarPositionController.shouldShowToolbarOnTop(tab));
+     }
+ 
+@@ -1072,7 +1074,7 @@
+         assertControlsAtBottom();
+ 
+         doReturn(true).when(mProgressBarParent).isInLayout();
+-        mIsNtpShowing.set(true);
++        mIsFindInPageShowing.set(true);
+         // Emulate the reactive stacker-driven anchor update (see
+         // assertControlsAtTop()). Because the parent is mid-layout,
+         // updateProgressBarAnchor() posts the change instead of applying it
+@@ -1415,10 +1417,10 @@
+ 
+     @Test
+     @Config(qualifiers = "sw400dp")
+-    public void testNtpFocusUsesBottomAndTopPreferenceStillWins() {
++    public void testNtpUsesBottomBeforeAndDuringEditingAndTopPreferenceStillWins() {
+         setUserToolbarAnchorPreference(false);
+         mIsNtpShowing.set(true);
+-        assertControlsAtTop();
++        assertControlsAtBottom();
+         mIsOmniboxFocused.set(true);
+         assertControlsAtBottom();
+         setUserToolbarAnchorPreference(true);
+diff --git a/chrome/android/junit/src/org/chromium/chrome/browser/ntp/BottomNewTabPageLayoutUnitTest.java b/chrome/android/junit/src/org/chromium/chrome/browser/ntp/BottomNewTabPageLayoutUnitTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..55bbcc908df2986f46f07313568456d4c5d017cc 100644
+--- /dev/null
++++ b/chrome/android/junit/src/org/chromium/chrome/browser/ntp/BottomNewTabPageLayoutUnitTest.java
+@@ -0,0 +1,170 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.ntp;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertTrue;
++
++import android.app.Activity;
++import android.view.Gravity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.LinearLayout;
++import android.widget.ScrollView;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.robolectric.Robolectric;
++import org.robolectric.annotation.Config;
++
++import org.chromium.base.test.BaseRobolectricTestRunner;
++import org.chromium.chrome.R;
++
++/** Measures home-page ordering against a real, resizable scroll viewport. */
++@RunWith(BaseRobolectricTestRunner.class)
++@Config(manifest = Config.NONE, sdk = {29, 36}, qualifiers = "sw360dp")
++public class BottomNewTabPageLayoutUnitTest {
++    private NewTabPageLayout mLayout;
++    private ScrollView mViewport;
++    private View mLogo;
++    private View mSearch;
++    private View mTiles;
++    private View mModule;
++    private int mToolbarHeight;
++
++    private View addChild(Activity activity, int height) {
++        View view = new View(activity);
++        mLayout.addView(view, new LinearLayout.LayoutParams(360, height));
++        return view;
++    }
++
++    @Before
++    public void setUp() {
++        Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
++        mViewport = new ScrollView(activity);
++        mLayout = new NewTabPageLayout(activity, null);
++        mLayout.setOrientation(LinearLayout.VERTICAL);
++        mLayout.setGravity(Gravity.CENTER);
++        mToolbarHeight = activity.getResources().getDimensionPixelSize(
++                R.dimen.toolbar_height_no_shadow);
++        mLayout.setTopInset(mToolbarHeight);
++        mLogo = addChild(activity, 80);
++        mSearch = addChild(activity, 70);
++        mTiles = addChild(activity, 200);
++        mModule = addChild(activity, 120);
++        View spacer = addChild(activity, 0);
++        spacer.setId(R.id.no_search_logo_spacer);
++        ((LinearLayout.LayoutParams) spacer.getLayoutParams()).weight = 1;
++        mLayout.setSearchBoxView(mSearch);
++        mViewport.addView(mLayout, new ScrollView.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++        activity.setContentView(mViewport);
++    }
++
++    private void layout(int height) {
++        // A second pass applies the viewport size observed during the first layout.
++        for (int i = 0; i < 3; ++i) {
++            mLayout.requestLayout();
++            mViewport.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
++            mViewport.layout(0, 0, 360, height);
++        }
++    }
++
++    @Test
++    public void bottomSearchSitsBelowBottomAlignedContents() {
++        mLayout.setBottomAnchored(true);
++        layout(1000);
++        assertEquals(1000, mSearch.getBottom());
++        assertEquals(mSearch.getTop(), mModule.getBottom());
++        assertEquals(mModule.getTop(), mTiles.getBottom());
++        assertEquals(mTiles.getTop(), mLogo.getBottom());
++        assertTrue(mLogo.getTop() > 0);
++    }
++
++    @Test
++    public void returningToTopRestoresOrderInsetsAndWrapContent() {
++        mLayout.setBottomAnchored(true);
++        layout(1000);
++        mLayout.setBottomAnchored(false);
++        layout(1000);
++        assertEquals(1, mLayout.indexOfChild(mSearch));
++        assertEquals(Gravity.CENTER, mLayout.getGravity());
++        assertEquals(mToolbarHeight, mLayout.getPaddingTop());
++        assertEquals(0, mLayout.getMinimumHeight());
++        assertTrue(mLayout.getHeight() < 1000);
++    }
++
++    @Test
++    public void keepsStatusBarAndBottomPadding() {
++        mLayout.setPadding(0, mToolbarHeight, 0, 13);
++        mLayout.setTopInset(mToolbarHeight + 24);
++        mLayout.setBottomAnchored(true);
++        layout(1000);
++        assertEquals(24, mLayout.getPaddingTop());
++        assertEquals(987, mSearch.getBottom());
++    }
++
++    @Test
++    public void followsSmallerViewportAboveKeyboardOrInLandscape() {
++        mLayout.setBottomAnchored(true);
++        layout(1000);
++        layout(600);
++        assertEquals(600, mSearch.getBottom());
++        assertEquals(600, mLayout.getHeight());
++    }
++
++    @Test
++    public void overflowingContentsRemainScrollable() {
++        mLayout.addView(new View(mLayout.getContext()),
++                new LinearLayout.LayoutParams(360, 1300));
++        mLayout.setBottomAnchored(true);
++        layout(1000);
++        assertTrue(mLayout.getHeight() > 1000);
++        assertTrue(mViewport.canScrollVertically(1));
++        assertEquals(mLayout.getHeight(), mSearch.getBottom());
++    }
++
++    @Test
++    public void noLogoSpacerDoesNotSeparateContentFromSearch() {
++        mLogo.setVisibility(View.GONE);
++        mLayout.setBottomAnchored(true);
++        layout(1000);
++        assertEquals(mSearch.getTop(), mModule.getBottom());
++        assertTrue(mTiles.getTop() > 500);
++    }
++
++    @Test
++    public void focusingBottomSearchDoesNotTranslateHomeToTheTop() {
++        mLayout.setBottomAnchored(true);
++        layout(1000);
++        mLayout.setTranslationYOfFakeboxAndAbove(-500f);
++        assertEquals(0f, mSearch.getTranslationY(), 0f);
++        assertEquals(0f, mTiles.getTranslationY(), 0f);
++        assertEquals(1000, mSearch.getBottom());
++    }
++
++    @Test
++    public void topFocusTranslationRetainsExistingBehavior() {
++        layout(1000);
++        mLayout.setTranslationYOfFakeboxAndAbove(-50f);
++        assertEquals(-50f, mLogo.getTranslationY(), 0f);
++        assertEquals(-50f, mSearch.getTranslationY(), 0f);
++        assertEquals(0f, mTiles.getTranslationY(), 0f);
++    }
++
++    @Test
++    public void lateAddedModuleStaysAboveSearch() {
++        mLayout.setBottomAnchored(true);
++        layout(1000);
++        View late = new View(mLayout.getContext());
++        mLayout.addView(late, new LinearLayout.LayoutParams(360, 30));
++        layout(1000);
++        assertEquals(mLayout.getChildCount() - 1, mLayout.indexOfChild(mSearch));
++        assertEquals(mSearch.getTop(), late.getBottom());
++        assertEquals(1000, mSearch.getBottom());
++    }
++}
+diff --git a/chrome/android/junit/BUILD.gn b/chrome/android/junit/BUILD.gn
+index 471ec26c3babc7df172714e18ee73c9f2c671bc0..fa443a38a77bbee588e0033a694ddf5bdb6f9ab8 100644
+--- a/chrome/android/junit/BUILD.gn
++++ b/chrome/android/junit/BUILD.gn
+@@ -1024,6 +1024,7 @@
+       "src/org/chromium/chrome/browser/ntp/IncognitoNewTabPageUnitTest.java",
+       "src/org/chromium/chrome/browser/ntp/NewTabPageCoordinatorUnitTest.java",
+       "src/org/chromium/chrome/browser/ntp/NewTabPageLayoutViewBinderUnitTest.java",
++      "src/org/chromium/chrome/browser/ntp/BottomNewTabPageLayoutUnitTest.java",
+       "src/org/chromium/chrome/browser/ntp/NewTabPageLocationPolicyManagerUnitTest.java",
+       "src/org/chromium/chrome/browser/ntp/NewTabPageUtilUnitTest.java",
+       "src/org/chromium/chrome/browser/ntp/RecentTabsCoordinatorUnitTest.java",

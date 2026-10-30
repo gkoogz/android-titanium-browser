@@ -4,7 +4,7 @@
 > [AGENTS.md](AGENTS.md) and [the complete build instructions](docs/steam-build-handoff.md).
 > The Kiwi-style bottom controls, optional tab cards and OLED setting are on
 > `codex/kiwi-bottom-controls-and-tab-cards` ([PR #1](https://github.com/gkoogz/android-titanium-browser/pull/1)).
-> Full APK compilation and phone acceptance are still pending.
+> Custom APKs and checksums are published in [this fork's releases](https://github.com/gkoogz/android-titanium-browser/releases).
 
 [![Stars](https://img.shields.io/github/stars/jqssun/android-titanium-browser?label=Stars&logo=GitHub)](https://github.com/jqssun/android-titanium-browser)
 [![GitHub](https://img.shields.io/github/downloads/jqssun/android-titanium-browser/total?label=GitHub&logo=GitHub)](https://github.com/jqssun/android-titanium-browser/releases)
