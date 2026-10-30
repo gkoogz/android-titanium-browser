@@ -19,7 +19,11 @@ def prepare(repo):
         ('symbol_level = 1', 'symbol_level = 0'),
     ]:
         args = replace_once(args, old, new)
-    args += '\nuse_thin_lto = false\nchrome_pgo_phase = 0\nuse_remoteexec = false\n'
+    # Non-official builds otherwise enable Java assertions even with is_debug=false.
+    # Vanadium's extra preferences use a null registry, supported only when
+    # release-mode preference checking is selected.
+    args += ('\nuse_thin_lto = false\nchrome_pgo_phase = 0\nuse_remoteexec = false\n'
+             'enable_java_asserts = false\n')
 
     script = (repo / 'build.sh').read_text()
     stop = 'autoninja -C out/Default chrome_public_apk'

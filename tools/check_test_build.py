@@ -25,6 +25,7 @@ def main():
         assert 'is_official_build = false' in args
         assert 'use_thin_lto = false' in args and 'chrome_pgo_phase = 0' in args
         assert 'use_remoteexec = false' in args
+        assert 'enable_java_asserts = false' in args
         script = (repo / 'build_test_prepare.sh').read_text()
         assert '\nset_keys\n' not in script
         assert 'sign_apk ' not in script and 'sign_aab ' not in script
