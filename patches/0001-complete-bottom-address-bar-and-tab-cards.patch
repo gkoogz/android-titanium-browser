@@ -160,7 +160,7 @@ index f5fc5b00b2017b84b8114a264196609755c802bd..f26ee49c8d78f4e5417d559ec0c2c3a9
      private final TabListFaviconProvider mTabListFaviconProvider;
      private final TabListMediator mMediator;
      private final TabListRecyclerView mRecyclerView;
-+    private @Nullable SharedPreferences.OnSharedPreferenceChangeListener mLayoutPreferenceObserver;
++    private SharedPreferences.@Nullable OnSharedPreferenceChangeListener mLayoutPreferenceObserver;
 +    private boolean mIsPhoneTabSwitcher;
 +    private boolean mDestroyed;
      private final SimpleRecyclerViewAdapter mAdapter;
@@ -593,7 +593,7 @@ index 7f77a53a158d86a10016f0e7c792439f2701d797..5ade2edeb4b973305d7786aeee0119dd
      private @Nullable BackPressManager mBackPressManager;
      private @Nullable LocationBarCoordinator mLocationBarCoordinator;
 +    private boolean mBottomAnchored;
-+    private @Nullable ViewTreeObserver.OnPreDrawListener mBottomAnchorObserver;
++    private ViewTreeObserver.@Nullable OnPreDrawListener mBottomAnchorObserver;
 +
 +    /** Configure transient Hub search before creating its location bar. */
 +    public void setBottomAnchored(boolean bottomAnchored) {
