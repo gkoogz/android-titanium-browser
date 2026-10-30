@@ -1,0 +1,1320 @@
+diff --git a/chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml b/chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml
+index 3e61d3657d9c06cacf249c041537730847779721..9a7aea9a946070f991f7fb441ee02c5f95382147 100644
+--- a/chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml
++++ b/chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml
+@@ -9,6 +9,12 @@ found in the LICENSE file.
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     xmlns:app="http://schemas.android.com/apk/res-auto">
+ 
++    <androidx.preference.ListPreference
++        android:key="tab_switcher_layout"
++        android:title="@string/titanium_tab_layout_title"
++        android:persistent="false"
++        app:allowDividerBelow="true" />
++
+     <org.chromium.components.browser_ui.settings.ChromeBasePreference
+         android:key="archive_settings_entrypoint"
+         android:title="@string/archive_settings_section_title"
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..337f3475ff909c0f644fba91464573d3ab84cc60
+--- /dev/null
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+@@ -0,0 +1,104 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.tasks.tab_management;
++
++import android.content.Context;
++import android.graphics.Rect;
++import android.view.View;
++
++import androidx.recyclerview.widget.GridLayoutManager;
++import androidx.recyclerview.widget.RecyclerView;
++
++import org.chromium.build.annotations.NullMarked;
++
++import java.util.function.IntPredicate;
++
++/** Retains tab-grid behavior while optionally displaying wide, overlapping preview cards. */
++@NullMarked
++class TabCardLayoutManager extends GridLayoutManager {
++    private final int mMinimumStride;
++    private boolean mStacked;
++    private boolean mBottomAnchored;
++    private int mCardHeight;
++
++    TabCardLayoutManager(Context context, int spanCount) {
++        super(context, spanCount);
++        mMinimumStride = Math.round(112 * context.getResources().getDisplayMetrics().density);
++    }
++
++    boolean setPresentation(boolean stacked, boolean bottomAnchored) {
++        if (mStacked == stacked && mBottomAnchored == bottomAnchored) return false;
++        mStacked = stacked;
++        mBottomAnchored = bottomAnchored;
++        requestLayout();
++        return true;
++    }
++
++    boolean setCardHeight(int height) {
++        if (mCardHeight == height) return false;
++        mCardHeight = height;
++        return true;
++    }
++
++    RecyclerView.ItemDecoration getOverlapDecoration(IntPredicate isTabCard) {
++        return new RecyclerView.ItemDecoration() {
++            @Override
++            public void getItemOffsets(
++                    Rect outRect, View view, RecyclerView parent, RecyclerView.State state) {
++                outRect.setEmpty();
++                int position = parent.getChildAdapterPosition(view);
++                if (!mStacked || position <= 0
++                        || state.isPreLayout() || position >= state.getItemCount()
++                        || !isTabCard.test(position) || !isTabCard.test(position - 1)) {
++                    return;
++                }
++                // Keep the title, close button and a useful portion of the preview exposed.
++                // Overlap the previous card from this card's top. In particular, the final
++                // preview never has a cached negative bottom inset after the last tab closes.
++                // Message cards keep their full height.
++                int stride = Math.max(mMinimumStride, Math.round(mCardHeight * 0.38f));
++                outRect.top = -Math.max(0, mCardHeight - stride);
++            }
++        };
++    }
++
++    @Override
++    public boolean supportsPredictiveItemAnimations() {
++        return !mStacked && super.supportsPredictiveItemAnimations();
++    }
++
++    @Override
++    public void onLayoutChildren(RecyclerView.Recycler recycler, RecyclerView.State state) {
++        super.onLayoutChildren(recycler, state);
++        if (!state.isPreLayout()) alignShortListToBottom(state);
++    }
++
++    @Override
++    public int scrollVerticallyBy(
++            int dy, RecyclerView.Recycler recycler, RecyclerView.State state) {
++        int consumed = super.scrollVerticallyBy(dy, recycler, state);
++        return alignShortListToBottom(state) ? 0 : consumed;
++    }
++
++    private boolean alignShortListToBottom(RecyclerView.State state) {
++        if (!mBottomAnchored || getChildCount() == 0
++                || findFirstVisibleItemPosition() != 0
++                || findLastVisibleItemPosition() != state.getItemCount() - 1) {
++            return false;
++        }
++        int firstTop = Integer.MAX_VALUE;
++        int lastBottom = Integer.MIN_VALUE;
++        for (int i = 0; i < getChildCount(); ++i) {
++            View child = getChildAt(i);
++            if (child == null) continue;
++            firstTop = Math.min(firstTop, getDecoratedTop(child));
++            lastBottom = Math.max(lastBottom, getDecoratedBottom(child));
++        }
++        int available = getHeight() - getPaddingTop() - getPaddingBottom();
++        if (lastBottom - firstTop > available) return false;
++        offsetChildrenVertical(getHeight() - getPaddingBottom() - lastBottom);
++        return true;
++    }
++}
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
+index f5fc5b00b2017b84b8114a264196609755c802bd..f26ee49c8d78f4e5417d559ec0c2c3a914c1f6d3 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
+@@ -9,6 +9,7 @@ import static org.chromium.chrome.browser.tasks.tab_management.RecyclerViewScrol
+ import static org.chromium.chrome.browser.tasks.tab_management.TabProperties.TAB_ID;
+ 
+ import android.app.Activity;
++import android.content.SharedPreferences;
+ import android.graphics.PointF;
+ import android.graphics.Rect;
+ import android.util.Size;
+@@ -30,6 +31,7 @@ import androidx.recyclerview.widget.RecyclerView.ItemAnimator.ItemAnimatorFinish
+ import androidx.recyclerview.widget.RecyclerView.OnItemTouchListener;
+ 
+ import org.chromium.base.Callback;
++import org.chromium.base.ContextUtils;
+ import org.chromium.base.Log;
+ import org.chromium.base.ObserverList;
+ import org.chromium.base.Token;
+@@ -44,6 +46,10 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
+ import org.chromium.chrome.browser.lifecycle.DestroyObserver;
+ import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
+ import org.chromium.chrome.browser.profiles.Profile;
++import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
++import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
++import org.chromium.chrome.browser.toolbar.ToolbarPositionController;
++import org.chromium.chrome.browser.toolbar.settings.AddressBarPreference;
+ import org.chromium.chrome.browser.tab.Tab;
+ import org.chromium.chrome.browser.tab.TabFavicon;
+ import org.chromium.chrome.browser.tab.TabId;
+@@ -121,6 +127,9 @@ public class TabListCoordinator implements PriceWelcomeMessageProvider, DestroyO
+     private final TabListFaviconProvider mTabListFaviconProvider;
+     private final TabListMediator mMediator;
+     private final TabListRecyclerView mRecyclerView;
++    private SharedPreferences.@Nullable OnSharedPreferenceChangeListener mLayoutPreferenceObserver;
++    private boolean mIsPhoneTabSwitcher;
++    private boolean mDestroyed;
+     private final SimpleRecyclerViewAdapter mAdapter;
+     private final @TabListMode int mMode;
+     private final Activity mActivity;
+@@ -384,8 +393,11 @@ public class TabListCoordinator implements PriceWelcomeMessageProvider, DestroyO
+             if (recyclerListener != null) mRecyclerView.setRecyclerListener(recyclerListener);
+ 
+             if (mMode == TabListMode.GRID) {
+-                GridLayoutManager gridLayoutManager =
+-                        new GridLayoutManager(activity, GRID_LAYOUT_SPAN_COUNT_COMPACT) {
++                mIsPhoneTabSwitcher = layoutType == TabListLayoutType.GROUPED
++                        && initialTabActionState == TabActionState.CLOSABLE
++                        && ToolbarPositionController.isToolbarPositionCustomizationEnabled(activity, false);
++                TabCardLayoutManager gridLayoutManager =
++                        new TabCardLayoutManager(activity, GRID_LAYOUT_SPAN_COUNT_COMPACT) {
+                             @Override
+                             public void onLayoutCompleted(RecyclerView.State state) {
+                                 super.onLayoutCompleted(state);
+@@ -393,7 +405,22 @@ public class TabListCoordinator implements PriceWelcomeMessageProvider, DestroyO
+                             }
+                         };
+                 mRecyclerView.setLayoutManager(gridLayoutManager);
++                mRecyclerView.addItemDecoration(gridLayoutManager.getOverlapDecoration(
++                        position -> mModelList.isValidIndex(position)
++                                && TabProperties.isTabOrTabGroup(mModelList.get(position).model)));
+                 mMediator.registerOrientationListener(gridLayoutManager);
++                if (mIsPhoneTabSwitcher) {
++                    mLayoutPreferenceObserver = (preferences, key) -> {
++                        if (ChromePreferenceKeys.TAB_SWITCHER_LAYOUT.equals(key)
++                                || ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED.equals(key)) {
++                            mRecyclerView.post(() -> {
++                                if (!mDestroyed) updateGridCardLayout(mRecyclerView.getWidth());
++                            });
++                        }
++                    };
++                    ContextUtils.getAppSharedPreferences().registerOnSharedPreferenceChangeListener(
++                            mLayoutPreferenceObserver);
++                }
+                 mMediator.updateSpanCount(
+                         gridLayoutManager,
+                         activity.getResources().getConfiguration().screenWidthDp);
+@@ -658,9 +685,16 @@ public class TabListCoordinator implements PriceWelcomeMessageProvider, DestroyO
+ 
+     private void updateGridCardLayout(int viewWidth) {
+         // Determine and set span count
+-        final GridLayoutManager layoutManager =
+-                (GridLayoutManager) mRecyclerView.getLayoutManager();
++        final TabCardLayoutManager layoutManager =
++                (TabCardLayoutManager) mRecyclerView.getLayoutManager();
+         assumeNonNull(layoutManager);
++        boolean stacked = mIsPhoneTabSwitcher && ChromeSharedPreferences.getInstance().readInt(
++                ChromePreferenceKeys.TAB_SWITCHER_LAYOUT, 0) == 1;
++        boolean bottom = mIsPhoneTabSwitcher && !AddressBarPreference.isToolbarConfiguredToShowOnTop();
++        mMediator.setUseStackedCards(stacked);
++        if (layoutManager.setPresentation(stacked, bottom)) {
++            mRecyclerView.invalidateItemDecorations();
++        }
+         boolean updatedSpan =
+                 mMediator.updateSpanCount(
+                         layoutManager, mActivity.getResources().getConfiguration().screenWidthDp);
+@@ -672,9 +706,16 @@ public class TabListCoordinator implements PriceWelcomeMessageProvider, DestroyO
+         final int cardWidthPx =
+                 ((viewWidth - mRecyclerView.getPaddingStart() - mRecyclerView.getPaddingEnd())
+                         / layoutManager.getSpanCount());
+-        final int cardHeightPx =
+-                TabUtils.deriveGridCardHeight(
+-                        cardWidthPx, mActivity, mBrowserControlsStateProvider);
++        int cardHeightPx = TabUtils.deriveGridCardHeight(
++                cardWidthPx, mActivity, mBrowserControlsStateProvider);
++        if (stacked && mRecyclerView.getHeight() > 0) {
++            cardHeightPx = Math.min(cardHeightPx, Math.max(
++                    (int) (160 * mActivity.getResources().getDisplayMetrics().density),
++                    (int) (mRecyclerView.getHeight() * 0.72f)));
++        }
++        if (layoutManager.setCardHeight(cardHeightPx)) {
++            mRecyclerView.invalidateItemDecorations();
++        }
+ 
+         final Size oldDefaultSize = mMediator.getDefaultGridCardSize();
+         final Size newDefaultSize = new Size(cardWidthPx, cardHeightPx);
+@@ -805,6 +846,12 @@ public class TabListCoordinator implements PriceWelcomeMessageProvider, DestroyO
+     /** Destroy any members that needs clean up. */
+     @Override
+     public void onDestroy() {
++        mDestroyed = true;
++        if (mLayoutPreferenceObserver != null) {
++            ContextUtils.getAppSharedPreferences().unregisterOnSharedPreferenceChangeListener(
++                    mLayoutPreferenceObserver);
++            mLayoutPreferenceObserver = null;
++        }
+         mMediator.destroy();
+         mModelList.clear();
+         destroyEmptyView();
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java
+index cd2ba2cabf5ba41b03219625cedcff814da327e3..ec94c9d13299e77135cd8b52f252482eeed36e0b 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediator.java
+@@ -1361,9 +1361,15 @@ public class TabListMediator implements TabListNotificationHandler {
+      * @param screenWidthDp The screnWidth based on which we update the span count.
+      * @return whether the span count changed.
+      */
++    private boolean mUseStackedCards;
++
++    void setUseStackedCards(boolean useStackedCards) {
++        mUseStackedCards = useStackedCards;
++    }
++
+     boolean updateSpanCount(GridLayoutManager manager, int screenWidthDp) {
+         final int oldSpanCount = manager.getSpanCount();
+-        final int newSpanCount = getSpanCount(screenWidthDp);
++        final int newSpanCount = mUseStackedCards ? 1 : getSpanCount(screenWidthDp);
+         manager.setSpanCount(newSpanCount);
+         manager.setSpanSizeLookup(
+                 new GridLayoutManager.SpanSizeLookup() {
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java
+index 689bd4479105c1435d0d37a87e3225f59e5bbaeb..c044af3ecd9c768f7c7d121666695c7916ecbdc7 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java
+@@ -12,6 +12,7 @@ import android.view.View;
+ 
+ import androidx.annotation.VisibleForTesting;
+ import androidx.preference.Preference;
++import androidx.preference.ListPreference;
+ 
+ import org.chromium.base.metrics.RecordHistogram;
+ import org.chromium.base.supplier.MonotonicObservableSupplier;
+@@ -82,6 +83,7 @@ public class TabsSettings extends ChromeBaseSettingsFragment {
+         SettingsUtils.addPreferencesFromResource(this, R.xml.tabs_settings);
+         mPageTitle.set(getString(R.string.tabs_settings_title));
+ 
++        configureTabSwitcherLayout();
+         configureAutoOpenSyncedTabGroupsSwitch();
+         configureShareTitlesAndUrlsWithOsSwitch();
+         configureChromeSuggestionsInOtherAppsSwitch();
+@@ -99,6 +101,23 @@ public class TabsSettings extends ChromeBaseSettingsFragment {
+         configureTabArchiveSettings();
+     }
+ 
++    private void configureTabSwitcherLayout() {
++        ListPreference preference = assertNonNull(findPreference("tab_switcher_layout"));
++        preference.setEntries(new CharSequence[] {
++                getString(R.string.titanium_tab_layout_grid),
++                getString(R.string.titanium_tab_layout_cards)});
++        preference.setEntryValues(new CharSequence[] {"0", "1"});
++        preference.setValue(Integer.toString(ChromeSharedPreferences.getInstance().readInt(
++                ChromePreferenceKeys.TAB_SWITCHER_LAYOUT, 0)));
++        preference.setSummaryProvider(ListPreference.SimpleSummaryProvider.getInstance());
++        preference.setOnPreferenceChangeListener((unused, value) -> {
++            ChromeSharedPreferences.getInstance().writeInt(
++                    ChromePreferenceKeys.TAB_SWITCHER_LAYOUT,
++                    "1".equals(value) ? 1 : 0);
++            return true;
++        });
++    }
++
+     private void configureAutoOpenSyncedTabGroupsSwitch() {
+         ChromeSwitchPreference autoOpenSyncedTabGroupsSwitch =
+                 assertNonNull(findPreference(PREF_AUTO_OPEN_SYNCED_TAB_GROUPS_SWITCH));
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5d2694413ac2b4bb8b82d1e4163c27023688651e
+--- /dev/null
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+@@ -0,0 +1,201 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.tasks.tab_management;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertTrue;
++
++import android.app.Activity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.TextView;
++
++import androidx.recyclerview.widget.RecyclerView;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.robolectric.Robolectric;
++import org.robolectric.annotation.Config;
++
++import org.chromium.base.test.BaseRobolectricTestRunner;
++
++/** Real RecyclerView measurements and scrolling, using the production layout manager. */
++@RunWith(BaseRobolectricTestRunner.class)
++@Config(manifest = Config.NONE, sdk = 28)
++public class TabCardLayoutManagerUnitTest {
++    private Activity mActivity;
++    private RecyclerView mView;
++    private TabCardLayoutManager mManager;
++    private int mCount;
++
++    @Before
++    public void setUp() {
++        mActivity = Robolectric.buildActivity(Activity.class).setup().get();
++        mView = new RecyclerView(mActivity);
++        mManager = new TabCardLayoutManager(mActivity, 1);
++        mManager.setCardHeight(400);
++        mView.setLayoutManager(mManager);
++        mView.setItemAnimator(null);
++        mView.addItemDecoration(mManager.getOverlapDecoration(position -> true));
++        mView.setAdapter(new RecyclerView.Adapter<RecyclerView.ViewHolder>() {
++            @Override
++            public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int type) {
++                TextView view = new TextView(mActivity);
++                view.setLayoutParams(new RecyclerView.LayoutParams(
++                        ViewGroup.LayoutParams.MATCH_PARENT, 400));
++                return new RecyclerView.ViewHolder(view) {};
++            }
++
++            @Override
++            public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
++                ((TextView) holder.itemView).setText("Tab " + position);
++            }
++
++            @Override
++            public int getItemCount() {
++                return mCount;
++            }
++        });
++        mActivity.setContentView(mView);
++    }
++
++    private void layout(int count, int height) {
++        mCount = count;
++        mView.getAdapter().notifyDataSetChanged();
++        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++                View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
++        mView.layout(0, 0, 360, height);
++    }
++
++    @Test
++    public void shortCardsOverlapAndEndAtBottom() {
++        mManager.setPresentation(true, true);
++        layout(3, 1000);
++        View first = mManager.findViewByPosition(0);
++        View second = mManager.findViewByPosition(1);
++        View last = mManager.findViewByPosition(2);
++        assertTrue(first.getTop() > 0);
++        assertTrue(second.getTop() < first.getBottom());
++        assertTrue(second.getTop() - first.getTop() >= 112);
++        assertEquals(1000, last.getBottom());
++        assertEquals(400, last.getHeight());
++        assertFalse(mManager.supportsPredictiveItemAnimations());
++    }
++
++    @Test
++    public void oneCardAndEmptyList() {
++        mManager.setPresentation(true, true);
++        layout(0, 1000);
++        assertEquals(0, mView.getChildCount());
++        layout(1, 1000);
++        assertEquals(600, mManager.findViewByPosition(0).getTop());
++        assertEquals(1000, mManager.findViewByPosition(0).getBottom());
++    }
++
++    @Test
++    public void gridKeepsColumnsAndBottomAlignment() {
++        mManager.setSpanCount(2);
++        mManager.setPresentation(false, true);
++        layout(3, 1000);
++        View first = mManager.findViewByPosition(0);
++        View second = mManager.findViewByPosition(1);
++        assertEquals(first.getTop(), second.getTop());
++        assertEquals(180, second.getLeft());
++        assertEquals(1000, mManager.findViewByPosition(2).getBottom());
++    }
++
++    @Test
++    public void longStackCanScrollToBothEnds() {
++        mManager.setPresentation(true, true);
++        layout(50, 1000);
++        mView.scrollBy(0, 600);
++        assertTrue(mManager.findFirstVisibleItemPosition() > 0);
++        mView.scrollToPosition(49);
++        layout(50, 1000);
++        assertTrue(mManager.findLastVisibleItemPosition() >= 49);
++        mView.scrollToPosition(0);
++        layout(50, 1000);
++        assertEquals(0, mManager.findFirstVisibleItemPosition());
++    }
++
++    @Test
++    public void layoutCanReturnToTopGrid() {
++        mManager.setPresentation(true, true);
++        layout(2, 1000);
++        mManager.setPresentation(false, false);
++        mManager.setSpanCount(2);
++        mView.invalidateItemDecorations();
++        layout(2, 1000);
++        assertEquals(0, mManager.findViewByPosition(0).getTop());
++        assertEquals(0, mManager.findViewByPosition(1).getTop());
++    }
++
++    @Test
++    public void closingCardReflowsStackAndKeepsLastCardReachable() {
++        mManager.setPresentation(true, true);
++        layout(3, 1000);
++        mCount = 2;
++        mView.getAdapter().notifyItemRemoved(1);
++        mView.requestLayout();
++        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++                View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY));
++        mView.layout(0, 0, 360, 1000);
++        assertEquals(1000, mManager.findViewByPosition(1).getBottom());
++    }
++
++    @Test
++    public void messageCardsDoNotOverlapAndBottomPaddingIsReserved() {
++        mView.removeItemDecorationAt(0);
++        mView.addItemDecoration(mManager.getOverlapDecoration(position -> position != 1));
++        mManager.setPresentation(true, true);
++        mView.setPadding(0, 0, 0, 30);
++        layout(3, 1400);
++        View first = mManager.findViewByPosition(0);
++        View message = mManager.findViewByPosition(1);
++        View last = mManager.findViewByPosition(2);
++        assertEquals(first.getBottom(), message.getTop());
++        assertEquals(message.getBottom(), last.getTop());
++        assertEquals(1370, last.getBottom());
++    }
++
++    @Test
++    public void shorterWindowRemainsScrollable() {
++        mManager.setPresentation(true, true);
++        layout(3, 450);
++        mView.scrollToPosition(2);
++        layout(3, 450);
++        assertEquals(2, mManager.findLastVisibleItemPosition());
++        assertTrue(mView.canScrollVertically(-1));
++    }
++
++    @Test
++    public void closingLastCardExposesFullPreviousPreview() {
++        mManager.setPresentation(true, true);
++        layout(3, 1000);
++        mCount = 2;
++        mView.getAdapter().notifyItemRemoved(2);
++        mView.requestLayout();
++        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++                View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY));
++        mView.layout(0, 0, 360, 1000);
++        assertEquals(1000, mManager.findViewByPosition(1).getBottom());
++    }
++
++    @Test
++    public void closingFirstCardKeepsNewFirstCardVisible() {
++        mManager.setPresentation(true, true);
++        layout(3, 1000);
++        mCount = 2;
++        mView.getAdapter().notifyItemRemoved(0);
++        mView.requestLayout();
++        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++                View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY));
++        mView.layout(0, 0, 360, 1000);
++        assertTrue(mManager.findViewByPosition(0).getTop() >= 0);
++        assertEquals(1000, mManager.findViewByPosition(1).getBottom());
++    }
++}
+diff --git a/chrome/android/features/tab_ui/tab_management_java_sources.gni b/chrome/android/features/tab_ui/tab_management_java_sources.gni
+index eec90568f0f814458fb67e6c1b24fa6e792e6f75..9a3446368f2a7c96d7aa8fd71066ecccbd27b3f8 100644
+--- a/chrome/android/features/tab_ui/tab_management_java_sources.gni
++++ b/chrome/android/features/tab_ui/tab_management_java_sources.gni
+@@ -135,6 +135,7 @@ internal_tab_management_java_sources = [
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListConfig.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListContainerProperties.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListContainerViewBinder.java",
++  "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorAction.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorActionProperties.java",
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/searchwidget/SearchActivity.java b/chrome/android/java/src/org/chromium/chrome/browser/searchwidget/SearchActivity.java
+index a0060821d2c5e55871c7c439cba376f7c7f25628..e63b0f095c0deb8a04bfa1e5d61d05c0f59b80cd 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/searchwidget/SearchActivity.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/searchwidget/SearchActivity.java
+@@ -305,6 +305,12 @@ public class SearchActivity extends AsyncInitializationActivity
+                         : null;
+         // Creates {@link LocationBarCoordinator}, {@link SearchBoxDataProvider}, and {@link
+         // LocationBarEmbedderUiOverrides} in addition to handling other UI specific logic.
++        mSearchUiCoordinator.setBottomAnchored(
++                SearchActivityUtils.getIntentOrigin(getIntent()) == IntentOrigin.HUB
++                        && org.chromium.chrome.browser.toolbar.ToolbarPositionController
++                                .isToolbarPositionCustomizationEnabled(this, false)
++                        && !org.chromium.chrome.browser.toolbar.settings.AddressBarPreference
++                                .isToolbarConfiguredToShowOnTop());
+         mSearchUiCoordinator.initialize(
+                 contentView,
+                 assertNonNull(findViewById(R.id.control_container)),
+@@ -876,6 +882,11 @@ public class SearchActivity extends AsyncInitializationActivity
+ 
+     private LocationBarEmbedder getLocationBarEmbedder() {
+         return new LocationBarEmbedder() {
++            @Override
++            public boolean isBottomAnchored() {
++                return mSearchUiCoordinator.isBottomAnchored();
++            }
++
+             @Override
+             public @Nullable AsyncViewStub getSuggestionsContainerStub() {
+                 return findViewById(R.id.search_activity_suggestions_container_stub);
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/searchwidget/SearchUiCoordinator.java b/chrome/android/java/src/org/chromium/chrome/browser/searchwidget/SearchUiCoordinator.java
+index 7f77a53a158d86a10016f0e7c792439f2701d797..5ade2edeb4b973305d7786aeee0119dd70e2bd2a 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/searchwidget/SearchUiCoordinator.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/searchwidget/SearchUiCoordinator.java
+@@ -12,10 +12,15 @@ import android.content.res.ColorStateList;
+ import android.graphics.drawable.Drawable;
+ import android.graphics.drawable.GradientDrawable;
+ import android.view.View;
++import android.view.Gravity;
++import android.view.ViewTreeObserver;
+ 
+ import androidx.annotation.ColorRes;
+ import androidx.annotation.DrawableRes;
+ import androidx.annotation.VisibleForTesting;
++import androidx.coordinatorlayout.widget.CoordinatorLayout;
++import androidx.core.view.ViewCompat;
++import androidx.core.view.WindowInsetsCompat;
+ 
+ import org.chromium.base.Callback;
+ import org.chromium.base.supplier.MonotonicObservableSupplier;
+@@ -62,6 +67,18 @@ public class SearchUiCoordinator {
+     private @Nullable EdgeToEdgeSystemBarColorHelper mSystemBarColorHelper;
+     private @Nullable BackPressManager mBackPressManager;
+     private @Nullable LocationBarCoordinator mLocationBarCoordinator;
++    private boolean mBottomAnchored;
++    private ViewTreeObserver.@Nullable OnPreDrawListener mBottomAnchorObserver;
++
++    /** Configure transient Hub search before creating its location bar. */
++    public void setBottomAnchored(boolean bottomAnchored) {
++        assert mLocationBarCoordinator == null;
++        mBottomAnchored = bottomAnchored;
++    }
++
++    public boolean isBottomAnchored() {
++        return mBottomAnchored;
++    }
+ 
+     // LocationBarEmbedderUiOverrides are passed to several child components upon construction.
+     // Ensure we don't accidentally introduce disconnection by keeping only a single live instance
+@@ -125,6 +142,33 @@ public class SearchUiCoordinator {
+         mControlContainer = controlContainer;
+         mSearchBox = contentView.findViewById(R.id.search_location_bar);
+         mAnchorView = contentView.findViewById(R.id.toolbar);
++        if (mBottomAnchored) {
++            View anchor = assertNonNull(mAnchorView);
++            CoordinatorLayout.LayoutParams params =
++                    (CoordinatorLayout.LayoutParams) anchor.getLayoutParams();
++            params.gravity = Gravity.BOTTOM;
++            anchor.setLayoutParams(params);
++            View stub = contentView.findViewById(R.id.search_activity_suggestions_container_stub);
++            CoordinatorLayout.LayoutParams stubParams =
++                    (CoordinatorLayout.LayoutParams) stub.getLayoutParams();
++            stubParams.setAnchorId(View.NO_ID);
++            stub.setLayoutParams(stubParams);
++            mBottomAnchorObserver = () -> {
++                WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(contentView);
++                if (insets != null) {
++                    int ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
++                    boolean overlay = windowAndroid.getInsetObserver() != null
++                            && windowAndroid.getInsetObserver().isKeyboardInOverlayMode();
++                    int inset = ime > 0 ? (overlay ? ime : 0)
++                            : insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
++                    // Insets are relative to this window, including in split-screen mode.
++                    // In resize mode Android has already moved the bottom edge above the IME.
++                    anchor.setTranslationY(-Math.max(0, inset - contentView.getPaddingBottom()));
++                }
++                return true;
++            };
++            contentView.getViewTreeObserver().addOnPreDrawListener(mBottomAnchorObserver);
++        }
+         mSystemBarColorHelper = systemBarColorHelper;
+         mBackPressManager = backPressManager != null ? backPressManager : new BackPressManager();
+ 
+@@ -182,6 +226,10 @@ public class SearchUiCoordinator {
+ 
+     /** Destroys the coordinator and its associated underlying components. */
+     public void destroy() {
++        if (mBottomAnchorObserver != null && mControlContainer != null) {
++            mControlContainer.getViewTreeObserver().removeOnPreDrawListener(mBottomAnchorObserver);
++            mBottomAnchorObserver = null;
++        }
+         if (mLocationBarCoordinator != null) {
+             mLocationBarCoordinator.destroy();
+             mLocationBarCoordinator = null;
+diff --git a/chrome/android/junit/BUILD.gn b/chrome/android/junit/BUILD.gn
+index 21efb67ce47f53d5b6404b3056d6f2cc25117662..c7b91eaf5873fcf25c640c655c72dfa326772c35 100644
+--- a/chrome/android/junit/BUILD.gn
++++ b/chrome/android/junit/BUILD.gn
+@@ -1542,6 +1542,7 @@ if (is_android) {
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorSelectionActionUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorShareActionUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorUngroupActionUnitTest.java",
++      "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediatorUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSearchOverlayCoordinatorUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabStripSnapshotterTest.java",
+diff --git a/chrome/browser/hub/internal/BUILD.gn b/chrome/browser/hub/internal/BUILD.gn
+index 2ec2d64c90a247c03137240ebbeefc9c7da82b68..d0140a2be795d706f1a8644093bcb0b2bff9575d 100644
+--- a/chrome/browser/hub/internal/BUILD.gn
++++ b/chrome/browser/hub/internal/BUILD.gn
+@@ -81,6 +81,7 @@ android_library("java") {
+     "//chrome/browser/flags:java",
+     "//chrome/browser/hub:java",
+     "//chrome/browser/profiles/android:java",
++    "//chrome/browser/preferences:java",
+     "//chrome/browser/tab:java",
+     "//chrome/browser/ui/android/actions:java",
+     "//chrome/browser/ui/android/bars_common:java",
+diff --git a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubCoordinator.java b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubCoordinator.java
+index 6ce98767d28adcaada1acf9c4ed63e57a00e95e2..fcb48761507ba6702cb78dc5faa585047dbd15a8 100644
+--- a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubCoordinator.java
++++ b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubCoordinator.java
+@@ -9,13 +9,16 @@ import static org.chromium.chrome.browser.hub.HubToolbarMediator.INVALID_PANE_SW
+ 
+ import android.app.Activity;
+ import android.content.Context;
++import android.content.SharedPreferences;
+ import android.os.Handler;
+ import android.view.LayoutInflater;
++import android.view.Gravity;
+ import android.view.View;
+ import android.view.ViewGroup;
+ import android.widget.FrameLayout;
+ 
+ import org.chromium.base.Callback;
++import org.chromium.base.ContextUtils;
+ import org.chromium.base.DeviceInfo;
+ import org.chromium.base.metrics.RecordHistogram;
+ import org.chromium.base.metrics.RecordUserAction;
+@@ -32,10 +35,14 @@ import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+ import org.chromium.chrome.browser.hub.HubColorMixer.ColorBlendProgress;
+ import org.chromium.chrome.browser.hub.HubPaneHostView.PaneViewProvider;
+ import org.chromium.chrome.browser.profiles.Profile;
++import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+ import org.chromium.chrome.browser.profiles.ProfileProvider;
+ import org.chromium.chrome.browser.tab.Tab;
+ import org.chromium.chrome.browser.toolbar.menu_button.MenuButtonCoordinator;
++import org.chromium.chrome.browser.toolbar.ToolbarPositionController;
++import org.chromium.chrome.browser.toolbar.settings.AddressBarPreference;
+ import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
++import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerFactory;
+ import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityClient;
+ import org.chromium.chrome.browser.user_education.UserEducationHelper;
+ import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
+@@ -77,6 +84,10 @@ public class HubCoordinator implements PaneHubController, BackPressHandler, Pane
+     private final PaneBackStackHandler mPaneBackStackHandler;
+     private final NullableObservableSupplier<Tab> mCurrentTabSupplier;
+     private @Nullable EdgeToEdgePadAdjuster mEdgeToEdgePadAdjuster;
++    private final MonotonicObservableSupplier<EdgeToEdgeController> mEdgeToEdgeSupplier;
++    private final View.OnLayoutChangeListener mBottomToolbarLayoutObserver;
++    private final SharedPreferences.OnSharedPreferenceChangeListener mToolbarPreferenceObserver;
++    private final Runnable mUpdateBottomToolbarLayout = this::updateBottomToolbarLayout;
+ 
+     /**
+      * Creates the {@link HubCoordinator}.
+@@ -111,6 +122,7 @@ public class HubCoordinator implements PaneHubController, BackPressHandler, Pane
+             NonNullObservableSupplier<Boolean> xrSpaceModeObservableSupplier,
+             @PaneId int defaultPaneId) {
+         mSwipeAnimationProgressSupplier = swipeAnimationProgressSupplier;
++        mEdgeToEdgeSupplier = edgeToEdgeSupplier;
+         Context context = containerView.getContext();
+         mBackPressStateChangeCallback = (ignored) -> updateHandleBackPressSupplier();
+         mPaneManager = paneManager;
+@@ -214,6 +226,52 @@ public class HubCoordinator implements PaneHubController, BackPressHandler, Pane
+         updateHandleBackPressSupplier();
+ 
+         mHubSearchBoxBackgroundCoordinator = new HubSearchBoxBackgroundCoordinator(mContainerView);
++        mBottomToolbarLayoutObserver = (view, l, t, r, b, ol, ot, or, ob) ->
++                updateBottomToolbarLayout();
++        ((View) hubToolbarView.getParent()).addOnLayoutChangeListener(mBottomToolbarLayoutObserver);
++        mToolbarPreferenceObserver = (preferences, key) -> {
++            if (ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED.equals(key)) {
++                mContainerView.post(mUpdateBottomToolbarLayout);
++            }
++        };
++        ContextUtils.getAppSharedPreferences().registerOnSharedPreferenceChangeListener(
++                mToolbarPreferenceObserver);
++        updateBottomToolbarLayout();
++    }
++
++    private void updateBottomToolbarLayout() {
++        if (DeviceInfo.isXr()) return;
++        HubToolbarView toolbar = mContainerView.findViewById(R.id.hub_toolbar);
++        View toolbarContainer = (View) toolbar.getParent();
++        boolean bottom = ToolbarPositionController.isToolbarPositionCustomizationEnabled(
++                mContainerView.getContext(), false)
++                && !AddressBarPreference.isToolbarConfiguredToShowOnTop();
++        toolbar.setBottomAnchored(bottom);
++        FrameLayout.LayoutParams toolbarParams =
++                (FrameLayout.LayoutParams) toolbarContainer.getLayoutParams();
++        int gravity = bottom ? Gravity.BOTTOM : Gravity.TOP;
++        if (toolbarParams.gravity != gravity) {
++            toolbarParams.gravity = gravity;
++            toolbarContainer.setLayoutParams(toolbarParams);
++        }
++        if (bottom && mEdgeToEdgePadAdjuster == null) {
++            mEdgeToEdgePadAdjuster = EdgeToEdgeControllerFactory.createForViewAndObserveSupplier(
++                    toolbarContainer, mEdgeToEdgeSupplier);
++        } else if (!bottom && mEdgeToEdgePadAdjuster != null) {
++            mEdgeToEdgePadAdjuster.destroy();
++            mEdgeToEdgePadAdjuster = null;
++            toolbarContainer.setPadding(0, 0, 0, 0);
++        }
++        View host = mContainerView.findViewById(R.id.hub_pane_host_container);
++        FrameLayout.LayoutParams hostParams = (FrameLayout.LayoutParams) host.getLayoutParams();
++        int toolbarHeight = toolbarContainer.getHeight();
++        int topMargin = bottom ? 0 : toolbarHeight;
++        int bottomMargin = bottom ? toolbarHeight : 0;
++        if (hostParams.topMargin != topMargin || hostParams.bottomMargin != bottomMargin) {
++            hostParams.topMargin = topMargin;
++            hostParams.bottomMargin = bottomMargin;
++            host.setLayoutParams(hostParams);
++        }
+     }
+ 
+     @SuppressWarnings("NullAway")
+@@ -225,6 +283,11 @@ public class HubCoordinator implements PaneHubController, BackPressHandler, Pane
+     /** Removes the hub from the layout tree and cleans up resources. */
+     @SuppressWarnings("NullAway")
+     public void destroy() {
++        mContainerView.removeCallbacks(mUpdateBottomToolbarLayout);
++        HubToolbarView toolbar = mContainerView.findViewById(R.id.hub_toolbar);
++        ((View) toolbar.getParent()).removeOnLayoutChangeListener(mBottomToolbarLayoutObserver);
++        ContextUtils.getAppSharedPreferences().unregisterOnSharedPreferenceChangeListener(
++                mToolbarPreferenceObserver);
+         mContainerView.removeView(mMainHubParent);
+ 
+         mFocusedPaneHandleBackPressSupplier.removeObserver(
+diff --git a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubToolbarView.java b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubToolbarView.java
+index 62ef19fba5f7220b2232e665e86030ddfbebfff0..d5f8dd5b8861b3eccffcc3d5720ddebf4b200518 100644
+--- a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubToolbarView.java
++++ b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubToolbarView.java
+@@ -83,6 +83,7 @@ public class HubToolbarView extends LinearLayout {
+     private boolean mBlockTabSelectionCallback;
+     private boolean mApplyDelayForSearchBoxAnimation;
+     private boolean mManualSearchBoxAnimation;
++    private boolean mBottomAnchored;
+     private @Nullable NonNullObservableSupplier<Boolean> mXrSpaceModeObservableSupplier;
+     private @Nullable List<FullButtonData> mCachedButtonDataList;
+     private @Nullable Drawable mTabIndicatorDrawable;
+@@ -120,6 +121,10 @@ public class HubToolbarView extends LinearLayout {
+         registerSearchBoxColorBlends();
+     }
+ 
++    void setBottomAnchored(boolean bottomAnchored) {
++        mBottomAnchored = bottomAnchored;
++    }
++
+     void setMenuButtonVisible(boolean visible) {
+         mMenuButtonWrapper.setVisibility(visible ? View.VISIBLE : View.GONE);
+     }
+@@ -599,7 +604,7 @@ public class HubToolbarView extends LinearLayout {
+         if (!mManualSearchBoxAnimation) return;
+ 
+         mSearchBoxLayout.setAlpha(fraction);
+-        mSearchBoxLayout.setPivotY(0);
++        mSearchBoxLayout.setPivotY(mBottomAnchored ? mSearchBoxHeightPx : 0);
+         mSearchBoxLayout.setScaleY(fraction);
+         mSearchBoxLayout.setTranslationY(0);
+ 
+diff --git a/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java b/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
+index 5af3acc64fc12f0e29bf7137964d97df799326d5..1fa706750d433039e2e8dd64ae79ebaa1a8ad06c 100644
+--- a/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
++++ b/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
+@@ -1066,6 +1066,9 @@ public final class ChromePreferenceKeys {
+     public static final String TIPS_NOTIFICATIONS_OPT_IN_PROMO_LAST_SHOWN_TIMESTAMP =
+             "Chrome.TipsNotifications.OptInLastShownTimestamp";
+ 
++    /** 0 for the tab grid, 1 for overlapping tab cards. */
++    public static final String TAB_SWITCHER_LAYOUT = "Chrome.Tabs.SwitcherLayout";
++
+     // If the toolbar should be shown on top.
+     public static final String TOOLBAR_TOP_ANCHORED = "Chrome.Toolbar.TopAnchored";
+ 
+@@ -1361,6 +1364,7 @@ public final class ChromePreferenceKeys {
+                 TIPS_NOTIFICATIONS_OPT_IN_PROMO_ACCEPTED,
+                 TIPS_NOTIFICATIONS_OPT_IN_PROMO_SHOW_COUNT,
+                 TIPS_NOTIFICATIONS_OPT_IN_PROMO_LAST_SHOWN_TIMESTAMP,
++                TAB_SWITCHER_LAYOUT,
+                 TOOLBAR_TOP_ANCHORED,
+                 TWA_DISCLOSURE_SEEN_PACKAGES,
+                 UMA_ON_POSTCREATE_COUNTER,
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/LocationBarCoordinator.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/LocationBarCoordinator.java
+index f6a6a736f2a860cbe8d39de4bd147de40da163e2..efa42e816421d8227f477b9bd53a3fbad2d13bfc 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/LocationBarCoordinator.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/LocationBarCoordinator.java
+@@ -360,9 +360,9 @@ public class LocationBarCoordinator
+                         uiOverrides.isForcedPhoneStyleOmnibox(),
+                         baseChromeLayout,
+                         () ->
+-                                mBrowserControlsStateProvider == null
+-                                        ? ControlsPosition.TOP
+-                                        : mBrowserControlsStateProvider.getControlsPosition(),
++                                isToolbarBottomAnchored()
++                                        ? ControlsPosition.BOTTOM
++                                        : ControlsPosition.TOP,
+                         mDeferredIMEWindowInsetApplicationCallback::getCurrentKeyboardHeight,
+                         bottomWindowPaddingSupplier,
+                         fuseboxStateSupplier,
+@@ -881,8 +881,9 @@ public class LocationBarCoordinator
+ 
+     @Override
+     public boolean isToolbarBottomAnchored() {
+-        return mBrowserControlsStateProvider != null
+-                && mBrowserControlsStateProvider.getControlsPosition() == ControlsPosition.BOTTOM;
++        return mBrowserControlsStateProvider == null
++                ? mLocationBarEmbedder.isBottomAnchored()
++                : mBrowserControlsStateProvider.getControlsPosition() == ControlsPosition.BOTTOM;
+     }
+ 
+     @Override
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/LocationBarEmbedder.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/LocationBarEmbedder.java
+index e85a74725befddf1d17d1513e10a0fcc9aabd701..c3f9f7cf84c79a57adf89d3b7aebd73030241414 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/LocationBarEmbedder.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/LocationBarEmbedder.java
+@@ -36,6 +36,11 @@ public interface LocationBarEmbedder {
+         return null;
+     }
+ 
++    /** Position for transient search surfaces without browser controls. */
++    default boolean isBottomAnchored() {
++        return false;
++    }
++
+     /** Returns the ID to use for the inflated suggestions container view, if available. */
+     default @IdRes int getSuggestionsContainerInflatedViewId() {
+         return View.NO_ID;
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/OmniboxSuggestionsDropdownEmbedderImpl.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/OmniboxSuggestionsDropdownEmbedderImpl.java
+index 843c8e7afbc9fe231a5419ca7f8518a22b4081cc..19480890a2692c92bc2a8d3f9cf5da31bc160719 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/OmniboxSuggestionsDropdownEmbedderImpl.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/OmniboxSuggestionsDropdownEmbedderImpl.java
+@@ -13,6 +13,7 @@ import android.graphics.Matrix;
+ import android.view.View;
+ import android.view.View.OnLayoutChangeListener;
+ import android.view.ViewTreeObserver.OnGlobalLayoutListener;
++import android.view.ViewTreeObserver.OnPreDrawListener;
+ import android.view.WindowInsets;
+ 
+ import androidx.core.graphics.Insets;
+@@ -48,6 +49,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
+         implements OmniboxSuggestionsDropdownEmbedder,
+                 OnLayoutChangeListener,
+                 OnGlobalLayoutListener,
++                OnPreDrawListener,
+                 ComponentCallbacks {
+     private final SettableNonNullObservableSupplier<OmniboxAlignment> mOmniboxAlignmentSupplier =
+             ObservableSuppliers.createNonNull(OmniboxAlignment.UNSPECIFIED);
+@@ -188,6 +190,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
+         mAnchorView.addOnLayoutChangeListener(this);
+         mAlignmentView.addOnLayoutChangeListener(this);
+         mAnchorView.getViewTreeObserver().addOnGlobalLayoutListener(this);
++        mAnchorView.getViewTreeObserver().addOnPreDrawListener(this);
+         onConfigurationChanged(mContext.getResources().getConfiguration());
+         recalculateOmniboxAlignment();
+     }
+@@ -197,6 +200,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
+         mAnchorView.removeOnLayoutChangeListener(this);
+         mAlignmentView.removeOnLayoutChangeListener(this);
+         mAnchorView.getViewTreeObserver().removeOnGlobalLayoutListener(this);
++        mAnchorView.getViewTreeObserver().removeOnPreDrawListener(this);
+     }
+ 
+     // View.OnLayoutChangeListener
+@@ -224,6 +228,13 @@ class OmniboxSuggestionsDropdownEmbedderImpl
+         }
+     }
+ 
++    @Override
++    public boolean onPreDraw() {
++        // Translation (including IME animation) does not cause a global layout.
++        if (isBottomAnchored()) onGlobalLayout();
++        return true;
++    }
++
+     // ComponentCallbacks
+     @Override
+     public void onConfigurationChanged(Configuration newConfig) {
+@@ -281,6 +292,11 @@ class OmniboxSuggestionsDropdownEmbedderImpl
+      *  |           dropdown            |
+      * </pre>
+      */
++    @Override
++    public boolean isBottomAnchored() {
++        return mControlsPositionSupplier.get() == ControlsPosition.BOTTOM;
++    }
++
+     void recalculateOmniboxAlignment() {
+         View contentView = mBaseChromeLayout;
+         // TODO(b:397495817): delete the section below once no longer needed.
+@@ -411,25 +427,14 @@ class OmniboxSuggestionsDropdownEmbedderImpl
+                         : contentView.getMeasuredHeight() - keyboardHeight;
+         int height;
+         if (controlsPosition == ControlsPosition.BOTTOM) {
+-            // When the keyboard is visible and toolbar is at the bottom, the keyboard height
+-            // from DeferredIMEWindowInsetApplicationCallback excludes the navigation bar
+-            // height (imeInsets.bottom - systemBarInsets.bottom), but both windowHeight
+-            // (from getDisplayHeight()) and contentView height include the navigation bar
+-            // area. Subtract the navigation bar height to avoid the suggestion list being
+-            // too tall and overlapping the address bar.
+-            int navBarHeight = 0;
+-            if (keyboardHeight > 0
+-                    && contentView != null
+-                    && contentView.getRootWindowInsets() != null) {
+-                navBarHeight =
+-                        WindowInsetsCompat.toWindowInsetsCompat(contentView.getRootWindowInsets())
+-                                .getInsets(WindowInsetsCompat.Type.navigationBars())
+-                                .bottom;
+-            }
+-            height =
+-                    Math.min(windowSpace, contentSpace)
+-                            - mAnchorView.getMeasuredHeight()
+-                            - navBarHeight;
++            // Use the toolbar's actual position. This works with both IME overlay and
++            // resize, navigation modes, multi-window and keyboard-height changes without
++            // subtracting the keyboard a second time.
++            mAnchorView.getLocationInWindow(mPositionArray);
++            int anchorTop = mPositionArray[1];
++            contentView.getLocationInWindow(mPositionArray);
++            height = Math.max(0, anchorTop - mPositionArray[1] - contentView.getPaddingTop());
++            paddingBottom = 0;
+         } else {
+             height = Math.min(windowSpace, contentSpace) - top;
+         }
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/OmniboxSuggestionsDropdownEmbedderImplUnitTest.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/OmniboxSuggestionsDropdownEmbedderImplUnitTest.java
+index 2eb8496cf97bace08fd20a06d01578ca940e652a..e95d364e8d60efbfc79eef2e0b3a7c5487c6f409 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/OmniboxSuggestionsDropdownEmbedderImplUnitTest.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/OmniboxSuggestionsDropdownEmbedderImplUnitTest.java
+@@ -326,86 +326,48 @@ public class OmniboxSuggestionsDropdownEmbedderImplUnitTest {
+                 alignment);
+     }
+ 
+-    @Test
+-    public void testRecalculateOmniboxAlignment_bottomControlsPosition() {
++    private void setBottomAnchorTop(int top) {
+         mControlsPosition = ControlsPosition.BOTTOM;
+-        mImpl.recalculateOmniboxAlignment();
+-        OmniboxAlignment alignment = mImpl.getCurrentAlignment();
+-        assertEquals(
+-                new OmniboxAlignment(
+-                        0, 0, ANCHOR_WIDTH, getExpectedHeight(0) - ANCHOR_HEIGHT, 0, 0, 0, 0),
+-                alignment);
++        doAnswer(invocation -> {
++            int[] position = invocation.getArgument(0);
++            position[0] = 0;
++            position[1] = top;
++            return null;
++        }).when(mAnchorView).getLocationInWindow(any());
+     }
+ 
+     @Test
+-    @Config(sdk = Build.VERSION_CODES.R)
+-    public void testRecalculateOmniboxAlignment_bottomControlsWithKeyboardSubtractsNavBarHeight() {
+-        int navBarHeight = 100;
+-        int keyboardHeight = 500;
+-        mControlsPosition = ControlsPosition.BOTTOM;
+-
+-        WindowInsets windowInsets =
+-                new WindowInsets.Builder()
+-                        .setInsets(
+-                                WindowInsets.Type.navigationBars(),
+-                                Insets.of(0, 0, 0, navBarHeight))
+-                        .build();
+-        doReturn(windowInsets).when(mContentView).getRootWindowInsets();
++    public void testBottomSuggestionsUseActualToolbarPosition() {
++        setBottomAnchorTop(800);
++        mImpl.recalculateOmniboxAlignment();
++        assertEquals(new OmniboxAlignment(0, 0, ANCHOR_WIDTH, 800, 0, 0, 0, 0),
++                mImpl.getCurrentAlignment());
++        assertTrue(mImpl.isBottomAnchored());
++    }
+ 
++    @Test
++    public void testBottomSuggestionsFollowKeyboardAndResizeWithoutDoubleSubtraction() {
++        setBottomAnchorTop(350);
+         OmniboxSuggestionsDropdownEmbedderImpl impl =
+                 new OmniboxSuggestionsDropdownEmbedderImpl(
+-                        mResourceProvider,
+-                        mWindowAndroid,
+-                        mAnchorView,
+-                        mHorizontalAlignmentView,
+-                        () -> 0,
+-                        () -> 0,
+-                        false,
+-                        mContentView,
+-                        () -> mControlsPosition,
+-                        () -> keyboardHeight,
+-                        () -> mBottomWindowPadding,
+-                        mFuseboxStateSupplier,
+-                        mFuseboxLayoutModeSupplier,
+-                        mTopInsetProvider,
++                        mResourceProvider, mWindowAndroid, mAnchorView,
++                        mHorizontalAlignmentView, () -> 0, () -> 0, false, mContentView,
++                        () -> mControlsPosition, () -> 500, () -> mBottomWindowPadding,
++                        mFuseboxStateSupplier, mFuseboxLayoutModeSupplier, mTopInsetProvider,
+                         () -> true);
+-
+         impl.recalculateOmniboxAlignment();
+-        OmniboxAlignment alignment = impl.getCurrentAlignment();
+-
+-        int windowHeight = (int) (getConfiguration().screenHeightDp * DIP_SCALE);
+-        int minSpaceAboveWindowBottom =
+-                mContext.getResources()
+-                        .getDimensionPixelSize(R.dimen.omnibox_min_space_above_window_bottom);
+-        int windowSpace =
+-                Math.min(windowHeight - keyboardHeight, windowHeight - minSpaceAboveWindowBottom);
+-        int contentSpace = Integer.MAX_VALUE - keyboardHeight;
+-        int expectedHeight = Math.min(windowSpace, contentSpace) - ANCHOR_HEIGHT - navBarHeight;
+-
+-        assertEquals(
+-                new OmniboxAlignment(0, 0, ANCHOR_WIDTH, expectedHeight, 0, 0, 0, 0), alignment);
++        assertEquals(350, impl.getCurrentAlignment().height);
++        setBottomAnchorTop(200);
++        impl.recalculateOmniboxAlignment();
++        assertEquals(200, impl.getCurrentAlignment().height);
++        impl.destroy();
+     }
+ 
+     @Test
+-    @Config(sdk = Build.VERSION_CODES.R)
+-    public void testRecalculateOmniboxAlignment_bottomControlsNoKeyboardDoesNotSubtractNavBar() {
+-        // When keyboard is hidden (keyboardHeight == 0), nav bar should NOT be subtracted.
+-        int navBarHeight = 100;
+-        mControlsPosition = ControlsPosition.BOTTOM;
+-
+-        WindowInsets windowInsets =
+-                new WindowInsets.Builder()
+-                        .setInsets(
+-                                WindowInsets.Type.navigationBars(),
+-                                Insets.of(0, 0, 0, navBarHeight))
+-                        .build();
++    public void testBottomSuggestionsClampTinyViewport() {
++        setBottomAnchorTop(-10);
+         mImpl.recalculateOmniboxAlignment();
+-        OmniboxAlignment alignment = mImpl.getCurrentAlignment();
+-        // No navBarHeight subtracted since keyboardHeight == 0.
+-        assertEquals(
+-                new OmniboxAlignment(
+-                        0, 0, ANCHOR_WIDTH, getExpectedHeight(0) - ANCHOR_HEIGHT, 0, 0, 0, 0),
+-                alignment);
++        assertEquals(0, mImpl.getCurrentAlignment().height);
+     }
+ 
+     @Test
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsContainer.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsContainer.java
+index bb400f40caf92519b5ec97052e2898324ab2799e..92abe08bac3ee11e6709a8e769dd7f43fb9a009a 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsContainer.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsContainer.java
+@@ -246,6 +246,15 @@ public class OmniboxSuggestionsContainer extends FrameLayout {
+                 omniboxAlignment.isOnlyHorizontalDifference(mOmniboxAlignment);
+         boolean isWidthDifference = omniboxAlignment.doesWidthDiffer(mOmniboxAlignment);
+         mOmniboxAlignment = omniboxAlignment;
++        boolean bottomAnchored = mEmbedder != null && mEmbedder.isBottomAnchored();
++        mDropdown.getLayoutScrollListener().setReverseLayout(bottomAnchored);
++        // Desktop Fusebox can temporarily reparent the dropdown into a ConstraintLayout.
++        if (mDropdown.getParent() == this
++                && mDropdown.getLayoutParams() instanceof FrameLayout.LayoutParams dropdownParams) {
++            dropdownParams.gravity = bottomAnchored
++                    ? android.view.Gravity.BOTTOM : android.view.Gravity.TOP;
++            mDropdown.setLayoutParams(dropdownParams);
++        }
+         mDropdown.setPaddingRelative(
+                 mDropdown.getPaddingStart(),
+                 mDropdown.getBaseTopPadding() + mOmniboxAlignment.paddingTop,
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsDropdown.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsDropdown.java
+index 79b63eabbd7d83d6c81fc96a3361487a3193176e..eb5034a788ccb32c8b9f8fed315da6ff2805aa31 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsDropdown.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsDropdown.java
+@@ -153,7 +153,10 @@ public class OmniboxSuggestionsDropdown extends RecyclerView {
+             if (mScrollOffsetListener != null) {
+                 mScrollOffsetListener.onResult(computeVerticalScrollOffset(state));
+             }
+-            return updateKeyboardVisibilityAndScroll(resultingDeltaY, requestedDeltaY);
++            // Normalize motion to suggestion rank, then restore the physical scroll sign.
++            int direction = getReverseLayout() ? -1 : 1;
++            return direction * updateKeyboardVisibilityAndScroll(
++                    direction * resultingDeltaY, direction * requestedDeltaY);
+         }
+ 
+         /**
+@@ -591,6 +594,12 @@ public class OmniboxSuggestionsDropdown extends RecyclerView {
+         boolean isGoDownKey = KeyNavigationUtil.isGoDown(event);
+         boolean isGoUpKey = KeyNavigationUtil.isGoUp(event);
+ 
++        if (mLayoutScrollListener.getReverseLayout()) {
++            boolean swap = isGoDownKey;
++            isGoDownKey = isGoUpKey;
++            isGoUpKey = swap;
++        }
++
+         if (isGoDownKey) {
+             mSelectionController.selectNextItem();
+             handleSelectionChange();
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsDropdownEmbedder.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsDropdownEmbedder.java
+index 23073e855f26ff1416467d1cb44d068d2e32c229..3adfaf89f39e1e1927ec11f3d651d1acb7911edb 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsDropdownEmbedder.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/suggestions/OmniboxSuggestionsDropdownEmbedder.java
+@@ -124,6 +124,11 @@ public interface OmniboxSuggestionsDropdownEmbedder {
+      */
+     OmniboxAlignment getCurrentAlignment();
+ 
++    /** Whether suggestions should grow upward from a bottom address bar. */
++    default boolean isBottomAnchored() {
++        return false;
++    }
++
+     /** Return whether the current window is a wide window. */
+     boolean isWideWindow();
+ 
+diff --git a/chrome/browser/ui/android/strings/android_chrome_strings.grd b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+index 3cddab43196fb2b5736e46ccc2a5658bc0720b71..b3b7dea92a9e25d3cd0733614606b6030dbcc5b7 100644
+--- a/chrome/browser/ui/android/strings/android_chrome_strings.grd
++++ b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+@@ -208,6 +208,15 @@ CHAR_LIMIT guidelines:
+       <message name="IDS_PREFS_SECTION_BASICS" desc='Title of "Basics" section of preferences. [CHAR_LIMIT=32]'>
+         Basics
+       </message>
++      <message name="IDS_TITANIUM_TAB_LAYOUT_TITLE" desc="Title of the tab switcher layout preference">
++        Tab switcher layout
++      </message>
++      <message name="IDS_TITANIUM_TAB_LAYOUT_GRID" desc="Tab switcher layout with a grid of previews">
++        Grid
++      </message>
++      <message name="IDS_TITANIUM_TAB_LAYOUT_CARDS" desc="Tab switcher layout with overlapping preview cards">
++        Cards
++      </message>
+       <message name="IDS_PREFS_SECTION_ADVANCED" desc='Title of "Advanced" section of preferences. [CHAR_LIMIT=32]'>
+         Advanced
+       </message>
+diff --git a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionController.java b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionController.java
+index 9d645d6a3fd3d1ec035694a724521b0d63a15060..8b44de9f0b2811561c71291e316ed901e2976f06 100644
+--- a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionController.java
++++ b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionController.java
+@@ -675,9 +675,10 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
+             boolean doesUserPreferTopToolbar,
+             @ControlsPosition int currentPosition) {
+         @ControlsPosition int newControlsPosition;
+-        if (ntpShowing
++        // Keep the user's bottom address bar in reach throughout an editing session,
++        // including sessions started from the NTP fakebox.
++        if ((ntpShowing && !isOmniboxFocused)
+                 || tabSwitcherShowing
+-                || isOmniboxFocused
+                 || isFindInPageShowing
+                 || (isPictureInPictureShowing
+                         && ChromeFeatureList.sPictureInPictureMovesToolbarAndroid.isEnabled())
+@@ -733,7 +734,9 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
+             layerYOffset += chinHeight;
+         }
+ 
+-        if (mIsOmniboxFocusedSupplier.get() && mCurrentPosition.get() == ControlsPosition.BOTTOM) {
++        if (mIsOmniboxFocusedSupplier.get()
++                && mCurrentPosition.get() == ControlsPosition.BOTTOM
++                && mControlContainer.getView().getRootWindowInsets() != null) {
+             WindowInsetsCompat windowInsetsCompat =
+                     WindowInsetsCompat.toWindowInsetsCompat(
+                             mControlContainer.getView().getRootWindowInsets(),
+@@ -776,22 +779,13 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
+         mBottomControlsStacker.requestLayerUpdate(false);
+     }
+ 
+-    /**
+-     * Returns whether the keyboard height should be ignored for toolbar's Y offset calculation when
+-     * omnibox is focused and keyboard is in resize mode. This can be true only if the corresponding
+-     * feature flag is enabled.
+-     *
+-     * @return Whether the keyboard height should be ignored.
+-     */
++    /** Avoid subtracting the IME twice when Android already resized the content window. */
+     private boolean shouldIgnoreKeyboardHeightInResizeMode() {
+         InsetObserver insetObserver = mWindowAndroid.getInsetObserver();
+-        boolean allowToolbarPositioningInResizeMode =
+-                ChromeFeatureList.sEnableToolbarPositioningInResizeMode.isEnabled();
+-
+         boolean isKeyboardInResizeMode =
+                 insetObserver != null && !insetObserver.isKeyboardInOverlayMode();
+ 
+-        return allowToolbarPositioningInResizeMode && isKeyboardInResizeMode;
++        return isKeyboardInResizeMode;
+     }
+ 
+     /** Returns whether the toolbar will be shown on top for the supplied tab. */
+diff --git a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionControllerTest.java b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionControllerTest.java
+index 72ed01301c7b76684bbdec70faac18ac699cd87e..f4b5b47db09146b4604cf632ed8c63346c40c292 100644
+--- a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionControllerTest.java
++++ b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/ToolbarPositionControllerTest.java
+@@ -548,7 +548,7 @@ public class ToolbarPositionControllerTest {
+         assertControlsAtBottom();
+ 
+         mIsOmniboxFocused.set(true);
+-        assertControlsAtTop();
++        assertControlsAtBottom();
+ 
+         mIsOmniboxFocused.set(false);
+         assertControlsAtBottom();
+@@ -633,7 +633,7 @@ public class ToolbarPositionControllerTest {
+         BottomControlsLayer progressBarLayer =
+                 mBottomControlsStacker.getLayerForTesting(LayerType.PROGRESS_BAR);
+ 
+-        mIsOmniboxFocused.set(true);
++        mIsFindInPageShowing.set(true);
+         assertControlsAtTop();
+         mBrowserControlsObserver.onBottomControlsHeightAnimationEnded();
+ 
+@@ -712,7 +712,7 @@ public class ToolbarPositionControllerTest {
+                         ControlsPosition.BOTTOM));
+ 
+         assertEquals(
+-                StateTransition.SNAP_TO_TOP,
++                StateTransition.NONE,
+                 ToolbarPositionController.calculateStateTransition(
+                         prefStateChanged,
+                         ntpShowing,
+@@ -1398,21 +1398,33 @@ public class ToolbarPositionControllerTest {
+                 mBottomControlsStacker.getLayerForTesting(LayerType.BOTTOM_TOOLBAR);
+         assertEquals(LayerVisibility.VISIBLE, toolbarLayer.getLayerVisibility());
+ 
+-        // Simulate Omnibox Focus -> Should SNAP to TOP.
+-        mIsOmniboxFocused.set(true);
++        // Find in page still snaps to the top.
++        mIsFindInPageShowing.set(true);
+         assertControlsAtTop();
+ 
+         // It should be in HIDDEN state IMMEDIATELY, not HIDING.
+         assertEquals(LayerVisibility.HIDDEN, toolbarLayer.getLayerVisibility());
+ 
+-        // Simulate Omnibox Unfocus -> Should SNAP to BOTTOM.
+-        mIsOmniboxFocused.set(false);
++        // Closing Find in page restores the bottom toolbar.
++        mIsFindInPageShowing.set(false);
+         assertControlsAtBottom();
+ 
+         // It should be in VISIBLE state IMMEDIATELY, not SHOWING.
+         assertEquals(LayerVisibility.VISIBLE, toolbarLayer.getLayerVisibility());
+     }
+ 
++    @Test
++    @Config(qualifiers = "sw400dp")
++    public void testNtpFocusUsesBottomAndTopPreferenceStillWins() {
++        setUserToolbarAnchorPreference(false);
++        mIsNtpShowing.set(true);
++        assertControlsAtTop();
++        mIsOmniboxFocused.set(true);
++        assertControlsAtBottom();
++        setUserToolbarAnchorPreference(true);
++        assertControlsAtTop();
++    }
++
+     private void assertControlsAtBottom() {
+         assertEquals(ControlsPosition.BOTTOM, mBrowserControlsSizer.getControlsPosition());
+         assertEquals(0, mBrowserControlsSizer.getTopControlsHeight());

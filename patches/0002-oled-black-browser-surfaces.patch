@@ -1,0 +1,899 @@
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
+index 2226c538449fd0022df1d14615334b30ab7f8605..4587c700cd02bbc1aba2054de551f0b5b9334a07 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
+@@ -12,6 +12,8 @@ import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.Card
+ import android.content.Context;
+ import android.content.res.Resources;
+ import android.graphics.drawable.Drawable;
++import android.graphics.drawable.GradientDrawable;
++import android.graphics.drawable.LayerDrawable;
+ import android.util.Size;
+ import android.view.View;
+ import android.view.ViewGroup;
+@@ -50,6 +52,8 @@ import org.chromium.chrome.browser.tasks.tab_management.labels.TabCardLabelType;
+ import org.chromium.chrome.browser.tasks.tab_management.labels.TabCardLabelView;
+ import org.chromium.chrome.tab_ui.R;
+ import org.chromium.components.browser_ui.util.TextResolver;
++import org.chromium.components.browser_ui.styles.OledBlackTheme;
++import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+ import org.chromium.components.tab_groups.TabGroupColorId;
+ import org.chromium.components.tabs.TabAlert;
+ import org.chromium.ui.modelutil.PropertyKey;
+@@ -489,6 +493,17 @@ public class TabGridViewBinder {
+                             : R.drawable.tab_grid_focus_ring;
+             contentView.setForeground(
+                     AppCompatResources.getDrawable(contentView.getContext(), focusRingRes));
++            if (isSelected && OledBlackTheme.isEnabled(contentView.getContext())) {
++                GradientDrawable selectedOutline = new GradientDrawable();
++                selectedOutline.setColor(android.graphics.Color.TRANSPARENT);
++                selectedOutline.setCornerRadius(contentView.getResources().getDimension(
++                        R.dimen.tab_grid_card_bg_radius));
++                selectedOutline.setStroke(Math.max(1, Math.round(
++                        2 * contentView.getResources().getDisplayMetrics().density)),
++                        SemanticColorUtils.getColorPrimary(contentView.getContext()));
++                contentView.setForeground(new LayerDrawable(new Drawable[] {
++                        assertNonNull(contentView.getForeground()), selectedOutline}));
++            }
+         }
+     }
+ 
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiThemeProvider.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiThemeProvider.java
+index d74e28a02e23a60618d3ef2598f2f5d7203e4a4d..30ec2b48150c2c6742afa411380f0138ac39982b 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiThemeProvider.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabUiThemeProvider.java
+@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat;
+ import com.google.android.material.color.MaterialColors;
+ 
+ import org.chromium.build.annotations.NullMarked;
++import org.chromium.components.browser_ui.styles.OledBlackTheme;
+ import org.chromium.chrome.R;
+ import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.CreationMode;
+ import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+@@ -25,6 +26,7 @@ public class TabUiThemeProvider {
+ 
+     public static @ColorInt int getGridTabSwitcherBackgroundColor(
+             Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? ContextCompat.getColor(context, R.color.default_bg_color_dark)
+                 : SemanticColorUtils.getDefaultBgColor(context);
+@@ -98,6 +100,7 @@ public class TabUiThemeProvider {
+      */
+     public static @ColorInt int getTabGroupDialogBackgroundColor(
+             Context context, boolean isIncognito, @CreationMode int creationMode) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         if (creationMode == CreationMode.DIALOG) {
+             return getTabGroupDialogBackgroundColor(context, isIncognito);
+         } else {
+@@ -114,6 +117,7 @@ public class TabUiThemeProvider {
+      */
+     public static @ColorInt int getTabGroupDialogBackgroundColor(
+             Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         if (isIncognito) {
+             return context.getColor(R.color.gm3_baseline_surface_container_dark);
+         } else {
+@@ -266,6 +270,7 @@ public class TabUiThemeProvider {
+      */
+     public static @ColorInt int getTabSelectionToolbarBackground(
+             Context context, boolean isIncognito, @CreationMode int creationMode) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         if (creationMode == CreationMode.DIALOG) {
+             return getTabGroupDialogBackgroundColor(context, isIncognito);
+         }
+diff --git a/chrome/android/java/res/xml/appearance_preferences.xml b/chrome/android/java/res/xml/appearance_preferences.xml
+index d89b76290c5ccc3de6b07bc1cf2d43861adda34a..82c423937e4e5d7ffb5e77e1c84c2ab0ac58be3c 100644
+--- a/chrome/android/java/res/xml/appearance_preferences.xml
++++ b/chrome/android/java/res/xml/appearance_preferences.xml
+@@ -7,6 +7,13 @@ found in the LICENSE file.
+ <PreferenceScreen
+     xmlns:android="http://schemas.android.com/apk/res/android">
+ 
++    <org.chromium.components.browser_ui.settings.ChromeSwitchPreference
++        android:key="oled_black"
++        android:order="-1"
++        android:persistent="false"
++        android:title="@string/titanium_oled_black_title"
++        android:summary="@string/titanium_oled_black_summary" />
++
+     <org.chromium.components.browser_ui.settings.ChromeBasePreference
+         android:fragment="org.chromium.chrome.browser.night_mode.settings.ThemeSettingsFragment"
+         android:key="ui_theme"
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/ChromeBaseAppCompatActivity.java b/chrome/android/java/src/org/chromium/chrome/browser/ChromeBaseAppCompatActivity.java
+index d4913144d4f232fd76d33e2398d3d9bb56403f18..fac65e6bc017e3f99f5a9eb7443ca84cbe0da85d 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/ChromeBaseAppCompatActivity.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/ChromeBaseAppCompatActivity.java
+@@ -602,7 +602,7 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
+         // UI that's pre-inflated using a themed application context as part of CCT warmup.
+         // Note: this should be called before any calls to `Window#getDecorView`.
+         if (shouldApplyDynamicColors()) {
+-            if (!maybeApplyCustomizedColors()) {
++            if (NightModeUtils.isOledBlackEnabled() || !maybeApplyCustomizedColors()) {
+                 DynamicColors.applyToActivityIfAvailable(this);
+             }
+         }
+@@ -628,6 +628,10 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
+             applySingleThemeOverlay(R.style.ThemeOverlay_BrowserUI_DesktopDensity);
+             applySingleThemeOverlay(R.style.ThemeOverlay_BrowserUI_DesktopDensity_TabStrip);
+         }
++        // Apply after Android's dynamic palette. Primary/secondary accent roles remain intact.
++        if (NightModeUtils.isOledBlackEnabled()) {
++            applySingleThemeOverlay(R.style.ThemeOverlay_BrowserUI_OledBlack);
++        }
+     }
+ 
+     protected void applySingleThemeOverlay(int themeOverlay) {
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/WarmupManager.java b/chrome/android/java/src/org/chromium/chrome/browser/WarmupManager.java
+index 54d3dce3434e089801fe523477dbf90d9ece57f1..4f8d05d4de4ae9b5566cb97538f41d743e07af4f 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/WarmupManager.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/WarmupManager.java
+@@ -401,6 +401,12 @@ public class WarmupManager {
+     }
+ 
+     static void applyThemeOverlays(Context context) {
++        if (org.chromium.chrome.browser.night_mode.NightModeUtils.isOledBlackEnabled()) {
++            if (com.google.android.material.color.DynamicColors.isDynamicColorAvailable()) {
++                context.getTheme().applyStyle(R.style.ThemeOverlay_BrowserUI_DynamicColors, true);
++            }
++            context.getTheme().applyStyle(R.style.ThemeOverlay_BrowserUI_OledBlack, true);
++        }
+         // TODO(twellington): Look at improving code sharing with ChromeBaseAppCompatActivity
+         // if the number of these overlays grows. The two below are experimental / are planned to be
+         // removed by mid 2025 or sooner.
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/appearance/settings/AppearanceSettingsFragment.java b/chrome/android/java/src/org/chromium/chrome/browser/appearance/settings/AppearanceSettingsFragment.java
+index 774fe010ad73acd858a3bb4902ddd55d703fea71..5568577bd95509e373cd03bdac9efc0b4e5329d6 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/appearance/settings/AppearanceSettingsFragment.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/appearance/settings/AppearanceSettingsFragment.java
+@@ -25,6 +25,7 @@ import org.chromium.chrome.browser.bookmarks.bar.BookmarkBarUtils;
+ import org.chromium.chrome.browser.flags.ChromeFeatureList;
+ import org.chromium.chrome.browser.night_mode.NightModeUtils;
+ import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
++import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
+ import org.chromium.chrome.browser.preferences.Pref;
+ import org.chromium.chrome.browser.preferences.PrefServiceUtil;
+ import org.chromium.chrome.browser.profiles.Profile;
+@@ -72,6 +73,13 @@ public class AppearanceSettingsFragment extends ChromeBaseSettingsFragment
+         initBookmarkBarPref();
+         initToolbarShortcutPref();
+         initTabPositionPref();
++        ChromeSwitchPreference oled = (ChromeSwitchPreference) findPreference("oled_black");
++        oled.setChecked(NightModeUtils.isOledBlackEnabled());
++        oled.setOnPreferenceChangeListener((preference, value) -> {
++            ChromeSharedPreferences.getInstance().writeBoolean(
++                    ChromePreferenceKeys.UI_OLED_BLACK_ENABLED, (boolean) value);
++            return true;
++        });
+     }
+ 
+     @Override
+@@ -305,10 +313,11 @@ public class AppearanceSettingsFragment extends ChromeBaseSettingsFragment
+     }
+ 
+     private void updateUiThemePref() {
+-        findPreference(PREF_UI_THEME)
+-                .setSummary(
+-                        NightModeUtils.getThemeSettingTitle(
+-                                getContext(), NightModeUtils.getThemeSetting()));
++        Preference theme = findPreference(PREF_UI_THEME);
++        boolean oled = NightModeUtils.isOledBlackEnabled();
++        theme.setEnabled(!oled);
++        theme.setSummary(oled ? getString(R.string.titanium_oled_black_title)
++                : NightModeUtils.getThemeSettingTitle(getContext(), NightModeUtils.getThemeSetting()));
+     }
+ 
+     /** Initializes the tab position preference row and listens for state changes. */
+diff --git a/chrome/android/junit/src/org/chromium/chrome/browser/night_mode/GlobalNightModeStateControllerTest.java b/chrome/android/junit/src/org/chromium/chrome/browser/night_mode/GlobalNightModeStateControllerTest.java
+index 467e8c6d75973527e5233368b19269c26cfa42cb..fa35bd32577baade41d187079f3373b034c0a92f 100644
+--- a/chrome/android/junit/src/org/chromium/chrome/browser/night_mode/GlobalNightModeStateControllerTest.java
++++ b/chrome/android/junit/src/org/chromium/chrome/browser/night_mode/GlobalNightModeStateControllerTest.java
+@@ -5,6 +5,7 @@
+ package org.chromium.chrome.browser.night_mode;
+ 
+ import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertTrue;
+ import static org.mockito.AdditionalAnswers.answerVoid;
+ import static org.mockito.ArgumentMatchers.any;
+@@ -16,6 +17,7 @@ import static org.mockito.Mockito.when;
+ import static org.chromium.base.ApplicationState.HAS_RUNNING_ACTIVITIES;
+ import static org.chromium.base.ApplicationState.HAS_STOPPED_ACTIVITIES;
+ import static org.chromium.chrome.browser.preferences.ChromePreferenceKeys.UI_THEME_SETTING;
++import static org.chromium.chrome.browser.preferences.ChromePreferenceKeys.UI_OLED_BLACK_ENABLED;
+ 
+ import androidx.appcompat.app.AppCompatDelegate;
+ 
+@@ -91,9 +93,32 @@ public class GlobalNightModeStateControllerTest {
+ 
+     @After
+     public void tearDown() {
++        ChromeSharedPreferences.getInstance().removeKey(UI_OLED_BLACK_ENABLED);
+         ChromeSharedPreferences.getInstance().removeKey(UI_THEME_SETTING);
+     }
+ 
++    @Test
++    public void testOledBlackOverridesAndRestoresLightChoice() {
++        ChromeSharedPreferences.getInstance().writeInt(UI_THEME_SETTING, ThemeType.LIGHT);
++        ChromeSharedPreferences.getInstance().writeBoolean(UI_OLED_BLACK_ENABLED, true);
++        assertTrue(mGlobalNightModeStateController.isInNightMode());
++        assertEquals(ThemeType.LIGHT, NightModeUtils.getThemeSetting());
++        ChromeSharedPreferences.getInstance().writeBoolean(UI_OLED_BLACK_ENABLED, false);
++        assertFalse(mGlobalNightModeStateController.isInNightMode());
++    }
++
++    @Test
++    public void testOledBlackNotifiesObserversWhenAlreadyDark() {
++        ChromeSharedPreferences.getInstance().writeInt(UI_THEME_SETTING, ThemeType.DARK);
++        mGlobalNightModeStateController.addObserver(mObserver);
++        ChromeSharedPreferences.getInstance().writeBoolean(UI_OLED_BLACK_ENABLED, true);
++        assertTrue(mGlobalNightModeStateController.isInNightMode());
++        verify(mObserver, times(1)).onNightModeStateChanged();
++        ChromeSharedPreferences.getInstance().writeBoolean(UI_OLED_BLACK_ENABLED, false);
++        assertTrue(mGlobalNightModeStateController.isInNightMode());
++        verify(mObserver, times(2)).onNightModeStateChanged();
++    }
++
+     @Test
+     public void testUpdateNightMode_SystemNightMode_DefaultsToSystem() {
+         // Set preference to system default and verify that the night mode isn't enabled.
+diff --git a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubColors.java b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubColors.java
+index 76e6c3fa0fe7ac69910fd95e8f185525f90a0f4a..f55f0ed01590263e309e395422a8410e48cb3c26 100644
+--- a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubColors.java
++++ b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/HubColors.java
+@@ -19,6 +19,7 @@ import com.google.android.material.color.MaterialColors;
+ import org.chromium.base.supplier.MonotonicObservableSupplier;
+ import org.chromium.base.supplier.NonNullObservableSupplier;
+ import org.chromium.build.annotations.NullMarked;
++import org.chromium.components.browser_ui.styles.OledBlackTheme;
+ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.browser.tab.Tab;
+ import org.chromium.chrome.browser.ui.bottombar.BottomBarConfigUtils;
+@@ -72,6 +73,7 @@ public final class HubColors {
+     /** Returns the background color generic surfaces should use per the given color scheme. */
+     public static @ColorInt int getBackgroundColor(
+             Context context, @HubColorScheme int colorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return switch (colorScheme) {
+             case HubColorScheme.DEFAULT -> SemanticColorUtils.getDefaultBgColor(context);
+             case HubColorScheme.INCOGNITO ->
+@@ -126,6 +128,7 @@ public final class HubColors {
+     /** Returns the color selected icons should use per the given color scheme. */
+     public static @ColorInt int getSelectedIconColor(
+             Context context, @HubColorScheme int colorScheme, boolean isGtsUpdateEnabled) {
++        if (OledBlackTheme.isEnabled(context)) return SemanticColorUtils.getColorPrimary(context);
+         return switch (colorScheme) {
+             case HubColorScheme.DEFAULT ->
+                     isGtsUpdateEnabled
+@@ -143,6 +146,7 @@ public final class HubColors {
+     /** Returns the color selected tab item selector should use per the given color scheme. */
+     public static @ColorInt int geTabItemSelectorColor(
+             Context context, @HubColorScheme int colorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return switch (colorScheme) {
+             case HubColorScheme.DEFAULT -> SemanticColorUtils.getColorSurfaceBright(context);
+             case HubColorScheme.INCOGNITO ->
+@@ -183,6 +187,7 @@ public final class HubColors {
+     /** Returns the color of the background for the search box. */
+     public static @ColorInt int getSearchBoxBgColor(
+             Context context, @HubColorScheme int colorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return switch (colorScheme) {
+             case HubColorScheme.DEFAULT ->
+                     ContextCompat.getColor(context, R.color.hub_search_box_bg_color);
+@@ -206,6 +211,7 @@ public final class HubColors {
+     /** Returns the hub pane switcher background color as per the given color scheme. */
+     public static @ColorInt int getPaneSwitcherBackgroundColor(
+             Context context, @HubColorScheme int colorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return switch (colorScheme) {
+             case HubColorScheme.DEFAULT -> SemanticColorUtils.getColorSurfaceContainer(context);
+             case HubColorScheme.INCOGNITO ->
+diff --git a/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java b/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
+index 1fa706750d433039e2e8dd64ae79ebaa1a8ad06c..0cdd0772fe6ef1a74d021be904ec66e21a2d076d 100644
+--- a/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
++++ b/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
+@@ -1086,6 +1086,9 @@ public final class ChromePreferenceKeys {
+      */
+     public static final String UI_THEME_SETTING = "ui_theme_setting";
+ 
++    /** Pure black browser surfaces with Android's dynamic accents. */
++    public static final String UI_OLED_BLACK_ENABLED = "Chrome.Appearance.OledBlack";
++
+     // Diagnostic counters for short sessions; see histogram
+     // UMA.PreNative.ChromeActivityCounter2.
+     public static final String UMA_ON_POSTCREATE_COUNTER = "Chrome.UMA.OnPostCreateCounter2";
+@@ -1367,6 +1370,7 @@ public final class ChromePreferenceKeys {
+                 TAB_SWITCHER_LAYOUT,
+                 TOOLBAR_TOP_ANCHORED,
+                 TWA_DISCLOSURE_SEEN_PACKAGES,
++                UI_OLED_BLACK_ENABLED,
+                 UMA_ON_POSTCREATE_COUNTER,
+                 UMA_ON_RESUME_COUNTER,
+                 USB_NOTIFICATION_IDS,
+diff --git a/chrome/browser/tab_ui/android/java/src/org/chromium/chrome/browser/tab_ui/TabCardThemeUtil.java b/chrome/browser/tab_ui/android/java/src/org/chromium/chrome/browser/tab_ui/TabCardThemeUtil.java
+index 23ac4204ec16697bbc1020b7a82681fc477eba6d..7ce2552f4c9e6b1d9008eebd9ad6140398074b17 100644
+--- a/chrome/browser/tab_ui/android/java/src/org/chromium/chrome/browser/tab_ui/TabCardThemeUtil.java
++++ b/chrome/browser/tab_ui/android/java/src/org/chromium/chrome/browser/tab_ui/TabCardThemeUtil.java
+@@ -19,6 +19,7 @@ import com.google.android.material.color.MaterialColors;
+ 
+ import org.chromium.base.ContextUtils;
+ import org.chromium.build.annotations.NullMarked;
++import org.chromium.components.browser_ui.styles.OledBlackTheme;
+ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
+ import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+@@ -78,6 +79,7 @@ public class TabCardThemeUtil {
+             boolean isIncognito,
+             boolean isSelected,
+             @Nullable @TabGroupColorId Integer colorId) {
++        if (OledBlackTheme.isEnabled(context)) return (isSelected ? SemanticColorUtils.getColorPrimary(context) : SemanticColorUtils.getDefaultTextColor(context));
+         if (isSelected) {
+             return isIncognito
+                     ? ContextCompat.getColor(context, R.color.incognito_tab_title_selected_color)
+@@ -108,6 +110,7 @@ public class TabCardThemeUtil {
+             boolean isIncognito,
+             boolean isSelected,
+             @Nullable @TabGroupColorId Integer colorId) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         if (isSelected) {
+             if (isIncognito) {
+                 return context.getColor(R.color.incognito_tab_thumbnail_placeholder_selected_color);
+@@ -142,6 +145,7 @@ public class TabCardThemeUtil {
+             boolean isIncognito,
+             boolean isSelected,
+             @Nullable @TabGroupColorId Integer colorId) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         if (isSelected) {
+             // Incognito does not use dynamic colors, so it can use colors from resources.
+             return isIncognito
+@@ -215,6 +219,7 @@ public class TabCardThemeUtil {
+             boolean isIncognito,
+             boolean isSelected,
+             @Nullable @TabGroupColorId Integer colorId) {
++        if (OledBlackTheme.isEnabled(context)) return (isSelected ? SemanticColorUtils.getColorPrimary(context) : SemanticColorUtils.getDefaultTextColor(context));
+         if (isSelected) {
+             return isIncognito
+                     ? context.getColor(R.color.incognito_tab_tile_number_selected_color)
+@@ -242,6 +247,7 @@ public class TabCardThemeUtil {
+             boolean isIncognito,
+             boolean isSelected,
+             @Nullable @TabGroupColorId Integer colorId) {
++        if (OledBlackTheme.isEnabled(context)) return ColorStateList.valueOf(isSelected ? SemanticColorUtils.getColorPrimary(context) : SemanticColorUtils.getDefaultIconColor(context));
+         if (isSelected) {
+             return isIncognito
+                     ? context.getColorStateList(R.color.incognito_tab_action_button_selected_color)
+@@ -281,6 +287,7 @@ public class TabCardThemeUtil {
+      * @return The mini-thumbnail frame color.
+      */
+     public static @ColorInt int getMiniThumbnailFrameColor(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.tab_grid_card_divider_tint_color_incognito)
+                 : SemanticColorUtils.getTabGridCardDividerTintColor(context);
+diff --git a/chrome/browser/ui/android/night_mode/java/src/org/chromium/chrome/browser/night_mode/GlobalNightModeStateController.java b/chrome/browser/ui/android/night_mode/java/src/org/chromium/chrome/browser/night_mode/GlobalNightModeStateController.java
+index 618b6e951c18e1abf90d24da4d3c7e3238a2231d..f9aac5474b0d5ce05e324eb5a701ef5e5617c05e 100644
+--- a/chrome/browser/ui/android/night_mode/java/src/org/chromium/chrome/browser/night_mode/GlobalNightModeStateController.java
++++ b/chrome/browser/ui/android/night_mode/java/src/org/chromium/chrome/browser/night_mode/GlobalNightModeStateController.java
+@@ -30,6 +30,7 @@ class GlobalNightModeStateController
+      * initialized yet.
+      */
+     private Boolean mNightModeOn;
++    private boolean mOledBlackOn;
+ 
+     private final SharedPreferences.OnSharedPreferenceChangeListener mPreferenceListener;
+ 
+@@ -43,7 +44,9 @@ class GlobalNightModeStateController
+     GlobalNightModeStateController() {
+         mPreferenceListener =
+                 (prefs, key) -> {
+-                    if (TextUtils.equals(key, UI_THEME_SETTING)) updateNightMode();
++                    if (TextUtils.equals(key, UI_THEME_SETTING)
++                            || TextUtils.equals(key, org.chromium.chrome.browser.preferences
++                                    .ChromePreferenceKeys.UI_OLED_BLACK_ENABLED)) updateNightMode();
+                 };
+ 
+         updateNightMode();
+@@ -119,12 +122,16 @@ class GlobalNightModeStateController
+ 
+     private void updateNightMode() {
+         final int theme = NightModeUtils.getThemeSetting();
+-        final boolean newNightModeOn =
+-                (theme == ThemeType.SYSTEM_DEFAULT
++        final boolean oledBlackOn = NightModeUtils.isOledBlackEnabled();
++        final boolean newNightModeOn = oledBlackOn
++                || (theme == ThemeType.SYSTEM_DEFAULT
+                                 && SystemNightModeMonitor.getInstance().isSystemNightModeOn())
+                         || theme == ThemeType.DARK;
+-        if (mNightModeOn != null && newNightModeOn == mNightModeOn) return;
++        // A palette change still recreates observers when night mode was already enabled.
++        if (mNightModeOn != null && newNightModeOn == mNightModeOn
++                && mOledBlackOn == oledBlackOn) return;
+ 
++        mOledBlackOn = oledBlackOn;
+         mNightModeOn = newNightModeOn;
+         AppCompatDelegate.setDefaultNightMode(
+                 mNightModeOn ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_NO);
+diff --git a/chrome/browser/ui/android/night_mode/java/src/org/chromium/chrome/browser/night_mode/NightModeUtils.java b/chrome/browser/ui/android/night_mode/java/src/org/chromium/chrome/browser/night_mode/NightModeUtils.java
+index 2b741c2fb0790d0c139d3545ddcd309a462fb000..82468fb66764184aac704ea4fc62be3b551d64b9 100644
+--- a/chrome/browser/ui/android/night_mode/java/src/org/chromium/chrome/browser/night_mode/NightModeUtils.java
++++ b/chrome/browser/ui/android/night_mode/java/src/org/chromium/chrome/browser/night_mode/NightModeUtils.java
+@@ -99,11 +99,14 @@ public class NightModeUtils {
+         return wrapper;
+     }
+ 
+-    /**
+-     * The current theme setting, reflecting either the user setting or the default if the user has
+-     * not explicitly set a preference.
+-     * @return The current theme setting. See {@link ThemeType}.
+-     */
++    /** Whether OLED black overrides the saved light/dark/system choice. */
++    public static boolean isOledBlackEnabled() {
++        return ChromeSharedPreferences.getInstance().readBoolean(
++                org.chromium.chrome.browser.preferences.ChromePreferenceKeys.UI_OLED_BLACK_ENABLED,
++                false);
++    }
++
++    /** Returns the saved theme choice, which is retained while OLED black is enabled. */
+     public static @ThemeType int getThemeSetting() {
+         int userSetting = ChromeSharedPreferences.getInstance().readInt(UI_THEME_SETTING, -1);
+         if (userSetting == -1) {
+diff --git a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/styles/OmniboxResourceProvider.java b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/styles/OmniboxResourceProvider.java
+index df784833bd73496f889d47fa67bfd66e36781e41..7b06951c9db285b0ba43c2e561330784fe8bb48a 100644
+--- a/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/styles/OmniboxResourceProvider.java
++++ b/chrome/browser/ui/android/omnibox/java/src/org/chromium/chrome/browser/omnibox/styles/OmniboxResourceProvider.java
+@@ -36,6 +36,7 @@ import org.chromium.base.ResettersForTesting;
+ import org.chromium.base.ThreadUtils;
+ import org.chromium.build.annotations.Initializer;
+ import org.chromium.build.annotations.NullMarked;
++import org.chromium.components.browser_ui.styles.OledBlackTheme;
+ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.browser.flags.ChromeFeatureList;
+ import org.chromium.chrome.browser.night_mode.NightModeUtils;
+@@ -1052,6 +1053,7 @@ public class OmniboxResourceProvider implements ComponentCallbacks2 {
+     /** Returns the background color for suggestions in the given color scheme and context. */
+     public static @ColorInt int getStandardSuggestionBackgroundColor(
+             Context context, @BrandedColorScheme int colorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return convertBrandedColorSchemeToIncognitoOrDayNightAdaptive(colorScheme)
+                 ? context.getColor(R.color.search_suggestion_bg_color_incognito)
+                 : ContextCompat.getColor(context, R.color.search_suggestion_bg_color);
+@@ -1063,6 +1065,7 @@ public class OmniboxResourceProvider implements ComponentCallbacks2 {
+      */
+     public static @ColorInt int getPopoverSuggestionBackgroundColor(
+             Context context, @BrandedColorScheme int colorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return convertBrandedColorSchemeToIncognitoOrDayNightAdaptive(colorScheme)
+                 ? context.getColor(R.color.gm3_baseline_surface_container_dark)
+                 : ContextCompat.getColor(context, R.color.omnibox_popover_suggestion_bg_color);
+@@ -1113,6 +1116,7 @@ public class OmniboxResourceProvider implements ComponentCallbacks2 {
+      */
+     public static @ColorInt int getSuggestionsDropdownBackgroundColor(
+             Context context, @BrandedColorScheme int brandedColorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return brandedColorScheme == BrandedColorScheme.INCOGNITO
+                 ? context.getColor(R.color.omnibox_dropdown_bg_incognito)
+                 : ContextCompat.getColor(context, R.color.omnibox_suggestion_dropdown_bg);
+@@ -1124,6 +1128,7 @@ public class OmniboxResourceProvider implements ComponentCallbacks2 {
+      */
+     public static @ColorInt int getTabletToolbarTextBoxBackgroundColor(
+             Context context, @BrandedColorScheme int brandedColorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return brandedColorScheme == BrandedColorScheme.INCOGNITO
+                 ? context.getColor(R.color.toolbar_text_box_background_incognito)
+                 : context.getColor(R.color.toolbar_text_box_bg_color);
+@@ -1132,6 +1137,7 @@ public class OmniboxResourceProvider implements ComponentCallbacks2 {
+     /** Returns the background color for the toolbar pill when the omnibox is in standby. */
+     public static @ColorInt int getTabletToolbarTextBoxStandbyBackgroundColor(
+             Context context, @BrandedColorScheme int brandedColorScheme) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         Context wrappedContext =
+                 maybeWrapContextForIncognitoColorScheme(context, brandedColorScheme);
+         return SemanticColorUtils.getColorSurface(wrappedContext);
+diff --git a/chrome/browser/ui/android/strings/android_chrome_strings.grd b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+index b3b7dea92a9e25d3cd0733614606b6030dbcc5b7..1c0443f9a354dc090b4121e48a0038e0733d2f53 100644
+--- a/chrome/browser/ui/android/strings/android_chrome_strings.grd
++++ b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+@@ -217,6 +217,12 @@ CHAR_LIMIT guidelines:
+       <message name="IDS_TITANIUM_TAB_LAYOUT_CARDS" desc="Tab switcher layout with overlapping preview cards">
+         Cards
+       </message>
++      <message name="IDS_TITANIUM_OLED_BLACK_TITLE" desc="Appearance setting to use pure black browser surfaces">
++        OLED black backgrounds
++      </message>
++      <message name="IDS_TITANIUM_OLED_BLACK_SUMMARY" desc="Explains that OLED black overrides the light theme but retains Android accent colors">
++        Use pure black browser backgrounds and dark controls with Android’s accent colors.
++      </message>
+       <message name="IDS_PREFS_SECTION_ADVANCED" desc='Title of "Advanced" section of preferences. [CHAR_LIMIT=32]'>
+         Advanced
+       </message>
+diff --git a/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/BottomUiThemeColorProvider.java b/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/BottomUiThemeColorProvider.java
+index da61cceaabc6f352c0fbb2594a327d3ff534a0b4..77083cc2c7532e22616d96fcc8265bff5ffe5786 100644
+--- a/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/BottomUiThemeColorProvider.java
++++ b/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/BottomUiThemeColorProvider.java
+@@ -21,6 +21,7 @@ import org.chromium.chrome.browser.theme.ThemeColorProvider.TintObserver;
+ import org.chromium.chrome.browser.ui.bottombar.BottomBarConfigUtils;
+ import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
+ import org.chromium.components.browser_ui.styles.SemanticColorUtils;
++import org.chromium.components.browser_ui.styles.OledBlackTheme;
+ 
+ /**
+  * Theme color provider that provides theme color and tinting for bottom controls. The coloring
+@@ -143,7 +144,11 @@ public class BottomUiThemeColorProvider extends ThemeColorProvider
+     }
+ 
+     private void updateColorAndTint(boolean animate) {
+-        if (mIsBottomBarEnabled) {
++        if (OledBlackTheme.isEnabled(mContext)) {
++            updatePrimaryColor(android.graphics.Color.BLACK, animate);
++            ColorStateList tint = getTintForTopAnchoredToolbar();
++            updateTint(tint, tint, getBrandedColorSchemeForTopAnchoredToolbar());
++        } else if (mIsBottomBarEnabled) {
+             updatePrimaryColor(mBottomControlsStacker.getBackgroundColor(), animate);
+             // Here we assume that while the BottomControlsStacker background color might be
+             // slightly different from the toolbar background color, the tints should follow the
+diff --git a/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/ThemeUtils.java b/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/ThemeUtils.java
+index a4f9b14b88bd3e5839da39514eed6e1670a6d0c0..c9bf7978b7e99bbbb6fd120ca1313cf898098292 100644
+--- a/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/ThemeUtils.java
++++ b/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/ThemeUtils.java
+@@ -14,6 +14,7 @@ import androidx.annotation.VisibleForTesting;
+ import androidx.core.content.ContextCompat;
+ 
+ import org.chromium.build.annotations.NullMarked;
++import org.chromium.components.browser_ui.styles.OledBlackTheme;
+ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.browser.tab.Tab;
+ import org.chromium.chrome.browser.ui.native_page.NativePage;
+@@ -63,6 +64,7 @@ public class ThemeUtils {
+      */
+     public static @ColorInt int getTextBoxColorForToolbarBackground(
+             Context context, @Nullable Tab tab, @ColorInt int backgroundColor) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         boolean isIncognito = tab != null && tab.isIncognito();
+         boolean isCustomTab = tab != null && tab.isCustomTab();
+         @ColorInt
+@@ -86,6 +88,7 @@ public class ThemeUtils {
+      */
+     public static @ColorInt int getTextBoxColorForToolbarBackgroundInNonNativePage(
+             Context context, @ColorInt int color, boolean isIncognito, boolean isCustomTab) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         // Text box color on default toolbar background in incognito mode is a pre-defined color.
+         if (isIncognito) {
+             return context.getColor(R.color.toolbar_text_box_background_incognito);
+diff --git a/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/TopUiThemeColorProvider.java b/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/TopUiThemeColorProvider.java
+index e91ccb0caa38da8538823cbdb33ecd548fd5a7ed..9742797de3289042b9e7ea10adeb35173dedd500 100644
+--- a/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/TopUiThemeColorProvider.java
++++ b/chrome/browser/ui/android/theme/java/src/org/chromium/chrome/browser/theme/TopUiThemeColorProvider.java
+@@ -19,6 +19,7 @@ import org.chromium.chrome.browser.tab.TabState;
+ import org.chromium.chrome.browser.ui.native_page.NativePage;
+ import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
+ import org.chromium.components.browser_ui.styles.ChromeColors;
++import org.chromium.components.browser_ui.styles.OledBlackTheme;
+ import org.chromium.ui.util.ColorUtils;
+ 
+ import java.util.function.Supplier;
+@@ -124,6 +125,7 @@ public class TopUiThemeColorProvider extends ThemeColorProvider {
+      * @return Returns the toolbar background color.
+      */
+     public @ColorInt int getToolbarBackgroundColor(Tab tab, @ColorInt int themeColor) {
++        if (OledBlackTheme.isEnabled(mContext)) return android.graphics.Color.BLACK;
+         NativePage nativePage = tab.getNativePage();
+         @ColorInt int defaultColor = calculateColor(tab, themeColor);
+         return nativePage != null
+@@ -147,6 +149,7 @@ public class TopUiThemeColorProvider extends ThemeColorProvider {
+      * @return Final theme color for a given tab, with other signals taken into account.
+      */
+     protected @ColorInt int calculateColor(Tab tab, @ColorInt int themeColor) {
++        if (OledBlackTheme.isEnabled(mContext)) return android.graphics.Color.BLACK;
+         // This method is used not only for the current tab but also for
+         // any given tab. Therefore it should not alter any class state.
+         if (!isUsingTabThemeColor(tab, themeColor)) {
+@@ -175,6 +178,7 @@ public class TopUiThemeColorProvider extends ThemeColorProvider {
+     }
+ 
+     private boolean isUsingDefaultColor(Tab tab, @ColorInt int themeColor) {
++        if (OledBlackTheme.isEnabled(mContext)) return true;
+         // This method is used not only for the current tab but also for
+         // any given tab. Therefore it should not alter any class state.
+         return !(isUsingTabThemeColor(tab, themeColor)
+diff --git a/components/browser_ui/styles/android/BUILD.gn b/components/browser_ui/styles/android/BUILD.gn
+index bcf386df61a965b16cdf9ff7878721531defbdbb..63123a8385265a078500018d464b9ebb6d5e4e31 100644
+--- a/components/browser_ui/styles/android/BUILD.gn
++++ b/components/browser_ui/styles/android/BUILD.gn
+@@ -9,6 +9,7 @@ android_library("java") {
+   sources = [
+     "java/src/org/chromium/components/browser_ui/styles/ChromeColors.java",
+     "java/src/org/chromium/components/browser_ui/styles/IncognitoColors.java",
++    "java/src/org/chromium/components/browser_ui/styles/OledBlackTheme.java",
+     "java/src/org/chromium/components/browser_ui/styles/NewLabelSpan.java",
+     "java/src/org/chromium/components/browser_ui/styles/NewLabelUtils.java",
+     "java/src/org/chromium/components/browser_ui/styles/SemanticColorUtils.java",
+@@ -32,6 +33,7 @@ robolectric_library("junit") {
+   sources = [
+     "junit/src/org/chromium/components/browser_ui/styles/NewLabelSpanUnitTest.java",
+     "junit/src/org/chromium/components/browser_ui/styles/NewLabelUtilsUnitTest.java",
++    "junit/src/org/chromium/components/browser_ui/styles/OledBlackThemeUnitTest.java",
+   ]
+ 
+   deps = [
+@@ -44,6 +46,8 @@ robolectric_library("junit") {
+     # theme for.
+     "//components/browser_ui/theme/android:java_resources",
+     "//third_party/junit",
++    "//third_party/android_deps:material_design_java",
++    "//third_party/androidx:androidx_core_core_java",
+     "//third_party/mockito:mockito_java",
+   ]
+ 
+@@ -322,6 +326,7 @@ android_resources("java_resources") {
+     "java/res/values/semantic_colors_dynamic.xml",
+     "java/res/values/styles.xml",
+     "java/res/values/themes.xml",
++    "java/res/values/oled_black.xml",
+     "java/res/values/values.xml",
+     "java/res/xml/expressive_button_shape_state_list.xml",
+     "java/res_chromium/drawable-hdpi/fre_product_logo.png",
+diff --git a/components/browser_ui/styles/android/java/res/values/attrs.xml b/components/browser_ui/styles/android/java/res/values/attrs.xml
+index 61ce66c84d938415329d7ea04d41098a75024054..e065612fd4b3568b2070c97e8125aa5a0cef9ee9 100644
+--- a/components/browser_ui/styles/android/java/res/values/attrs.xml
++++ b/components/browser_ui/styles/android/java/res/values/attrs.xml
+@@ -6,6 +6,7 @@ found in the LICENSE file.
+ -->
+ 
+ <resources>
++    <attr name="isOledBlack" format="boolean" />
+     <declare-styleable name="ChromeDialog">
+         <attr name="isDialogFullscreen" format="boolean" />
+     </declare-styleable>
+diff --git a/components/browser_ui/styles/android/java/res/values/oled_black.xml b/components/browser_ui/styles/android/java/res/values/oled_black.xml
+new file mode 100644
+index 0000000000000000000000000000000000000000..0917d180b759e86ecff7b7e6daf96735c9877eae
+--- /dev/null
++++ b/components/browser_ui/styles/android/java/res/values/oled_black.xml
+@@ -0,0 +1,28 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++Copyright 2026 The Chromium Authors
++Use of this source code is governed by a BSD-style license that can be
++found in the LICENSE file.
++-->
++<resources>
++    <!-- Applied after the OS dynamic palette. Accent and on-accent roles are inherited. -->
++    <style name="ThemeOverlay.BrowserUI.OledBlack" parent="">
++        <item name="isOledBlack">true</item>
++        <item name="android:colorBackground">@android:color/black</item>
++        <item name="android:windowBackground">@android:color/black</item>
++        <item name="android:statusBarColor">@android:color/black</item>
++        <item name="android:navigationBarColor">@android:color/black</item>
++        <item name="colorSurface">@android:color/black</item>
++        <item name="colorSurfaceVariant">@android:color/black</item>
++        <item name="colorSurfaceDim">@android:color/black</item>
++        <item name="colorSurfaceBright">@android:color/black</item>
++        <item name="colorSurfaceContainerLowest">@android:color/black</item>
++        <item name="colorSurfaceContainerLow">@android:color/black</item>
++        <item name="colorSurfaceContainer">@android:color/black</item>
++        <item name="colorSurfaceContainerHigh">@android:color/black</item>
++        <item name="colorSurfaceContainerHighest">@android:color/black</item>
++        <item name="elevationOverlayEnabled">false</item>
++        <item name="elevationOverlayColor">@android:color/black</item>
++        <item name="elevationOverlayAccentColor">@android:color/transparent</item>
++    </style>
++</resources>
+diff --git a/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/ChromeColors.java b/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/ChromeColors.java
+index ff1da80ecbf59cd6eaf62a446efb0a1ff5b16add..fa71c21d52533260c3c3c34a9ca88f6edf3ecb12 100644
+--- a/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/ChromeColors.java
++++ b/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/ChromeColors.java
+@@ -28,6 +28,7 @@ public class ChromeColors {
+      * @return The default theme color.
+      */
+     public static @ColorInt int getDefaultThemeColor(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.toolbar_background_incognito)
+                 : MaterialColors.getColor(context, R.attr.colorSurface, TAG);
+@@ -43,6 +44,7 @@ public class ChromeColors {
+      * @return The primary background color.
+      */
+     public static @ColorInt int getPrimaryBackgroundColor(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.default_bg_color_dark)
+                 : SemanticColorUtils.getDefaultBgColor(context);
+@@ -135,6 +137,7 @@ public class ChromeColors {
+      * @return The {@link ColorRes} for the background.
+      */
+     public static @ColorInt int getDefaultBgColor(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         if (isIncognito) {
+             return context.getColor(R.color.default_bg_color_dark);
+         }
+diff --git a/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/IncognitoColors.java b/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/IncognitoColors.java
+index 4c7c6db7248b6670ed8d5a90b3b5f64f5e4a54d3..6025ad9505446e43a45427d82dfc2033ba1dbd7c 100644
+--- a/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/IncognitoColors.java
++++ b/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/IncognitoColors.java
+@@ -22,6 +22,7 @@ import org.chromium.build.annotations.NullMarked;
+ public class IncognitoColors {
+     /** {@link SemanticColorUtils#getColorSurface} */
+     public static @ColorInt int getColorSurface(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.gm3_baseline_surface_dark)
+                 : SemanticColorUtils.getColorSurface(context);
+@@ -29,6 +30,7 @@ public class IncognitoColors {
+ 
+     /** {@link SemanticColorUtils#getColorSurfaceBright} */
+     public static @ColorInt int getColorSurfaceBright(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.gm3_baseline_surface_bright_dark)
+                 : SemanticColorUtils.getColorSurfaceBright(context);
+@@ -36,6 +38,7 @@ public class IncognitoColors {
+ 
+     /** {@link SemanticColorUtils#getColorSurfaceContainerHigh} */
+     public static @ColorInt int getColorSurfaceContainerHigh(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.gm3_baseline_surface_container_high_dark)
+                 : SemanticColorUtils.getColorSurfaceContainerHigh(context);
+@@ -44,6 +47,7 @@ public class IncognitoColors {
+     /** {@link SemanticColorUtils#getColorSurfaceContainerHighest} */
+     public static @ColorInt int getColorSurfaceContainerHighest(
+             Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.gm3_baseline_surface_container_highest_dark)
+                 : SemanticColorUtils.getColorSurfaceContainerHighest(context);
+@@ -51,6 +55,7 @@ public class IncognitoColors {
+ 
+     /** {@link SemanticColorUtils#getColorSurfaceContainerLow} */
+     public static @ColorInt int getColorSurfaceContainerLow(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.gm3_baseline_surface_container_low_dark)
+                 : SemanticColorUtils.getColorSurfaceContainerLow(context);
+@@ -58,6 +63,7 @@ public class IncognitoColors {
+ 
+     /** {@link SemanticColorUtils#getInteractableChipBgColor} */
+     public static @ColorInt int getInteractableChipBgColor(Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return android.graphics.Color.BLACK;
+         return isIncognito
+                 ? context.getColor(R.color.gm3_baseline_surface_container_high_dark)
+                 : SemanticColorUtils.getInteractableChipBgColor(context);
+@@ -66,6 +72,7 @@ public class IncognitoColors {
+     /** Returns a color state list for the surface container color. */
+     public static ColorStateList getColorSurfaceContainerTintList(
+             Context context, boolean isIncognito) {
++        if (OledBlackTheme.isEnabled(context)) return ColorStateList.valueOf(android.graphics.Color.BLACK);
+         return isIncognito
+                 ? context.getColorStateList(R.color.color_surface_container_incognito_tint_list)
+                 : SemanticColorUtils.getColorSurfaceContainerTintList(context);
+diff --git a/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/OledBlackTheme.java b/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/OledBlackTheme.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c3c0047e64cab2ed04c1b817c04e84c8e6d58709
+--- /dev/null
++++ b/components/browser_ui/styles/android/java/src/org/chromium/components/browser_ui/styles/OledBlackTheme.java
+@@ -0,0 +1,22 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.components.browser_ui.styles;
++
++import android.content.Context;
++import android.util.TypedValue;
++
++import org.chromium.build.annotations.NullMarked;
++
++/** Identifies the surface-only overlay without depending on Chrome preferences. */
++@NullMarked
++public final class OledBlackTheme {
++    private OledBlackTheme() {}
++
++    public static boolean isEnabled(Context context) {
++        TypedValue value = new TypedValue();
++        return context.getTheme().resolveAttribute(R.attr.isOledBlack, value, true)
++                && value.data != 0;
++    }
++}
+diff --git a/components/browser_ui/styles/android/junit/src/org/chromium/components/browser_ui/styles/OledBlackThemeUnitTest.java b/components/browser_ui/styles/android/junit/src/org/chromium/components/browser_ui/styles/OledBlackThemeUnitTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..09bf7dd4011baadf981497d79cbd543e8ff3b746
+--- /dev/null
++++ b/components/browser_ui/styles/android/junit/src/org/chromium/components/browser_ui/styles/OledBlackThemeUnitTest.java
+@@ -0,0 +1,97 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.components.browser_ui.styles;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertTrue;
++
++import android.content.Context;
++import android.graphics.Color;
++import android.util.TypedValue;
++import android.view.ContextThemeWrapper;
++
++import androidx.core.graphics.ColorUtils;
++
++import com.google.android.material.color.MaterialColors;
++
++import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.robolectric.RuntimeEnvironment;
++import org.robolectric.annotation.Config;
++
++import org.chromium.base.test.BaseRobolectricTestRunner;
++
++@RunWith(BaseRobolectricTestRunner.class)
++@Config(manifest = Config.NONE, sdk = 28, qualifiers = "night")
++public class OledBlackThemeUnitTest {
++    private Context createContext() {
++        return new ContextThemeWrapper(RuntimeEnvironment.getApplication(),
++                com.google.android.material.R.style.Theme_Material3_Dark_NoActionBar);
++    }
++
++    private void applyOverlay(Context context) {
++        context.getTheme().applyStyle(R.style.ThemeOverlay_BrowserUI_OledBlack, true);
++    }
++
++    private int color(Context context, int attribute) {
++        return MaterialColors.getColor(context, attribute, "OledBlackThemeTest");
++    }
++
++    @Test
++    public void overlayIsOptIn() {
++        Context context = createContext();
++        assertFalse(OledBlackTheme.isEnabled(context));
++        applyOverlay(context);
++        assertTrue(OledBlackTheme.isEnabled(context));
++        assertFalse(OledBlackTheme.isEnabled(createContext()));
++    }
++
++    @Test
++    public void surfacesAreOpaquePureBlack() {
++        Context context = createContext();
++        applyOverlay(context);
++        for (int attr : new int[] {android.R.attr.colorBackground, R.attr.colorSurface,
++                R.attr.colorSurfaceVariant, R.attr.colorSurfaceDim, R.attr.colorSurfaceBright,
++                R.attr.colorSurfaceContainerLowest, R.attr.colorSurfaceContainerLow,
++                R.attr.colorSurfaceContainer, R.attr.colorSurfaceContainerHigh,
++                R.attr.colorSurfaceContainerHighest}) {
++            assertEquals(Color.BLACK, color(context, attr));
++        }
++    }
++
++    @Test
++    public void accentPaletteAndItsTextColorsArePreserved() {
++        Context context = createContext();
++        int[] accents = {R.attr.colorPrimary, R.attr.colorOnPrimary, R.attr.colorPrimaryContainer,
++                R.attr.colorOnPrimaryContainer, R.attr.colorSecondary, R.attr.colorOnSecondary,
++                R.attr.colorSecondaryContainer, R.attr.colorOnSecondaryContainer,
++                R.attr.colorTertiary, R.attr.colorOnTertiary};
++        int[] before = new int[accents.length];
++        for (int i = 0; i < accents.length; ++i) before[i] = color(context, accents[i]);
++        applyOverlay(context);
++        for (int i = 0; i < accents.length; ++i) {
++            assertEquals(before[i], color(context, accents[i]));
++        }
++    }
++
++    @Test
++    public void elevationCannotRetintBlackSurfaces() {
++        Context context = createContext();
++        applyOverlay(context);
++        TypedValue value = new TypedValue();
++        assertTrue(context.getTheme().resolveAttribute(R.attr.elevationOverlayEnabled, value, true));
++        assertEquals(0, value.data);
++        assertEquals(Color.BLACK, color(context, R.attr.elevationOverlayColor));
++    }
++
++    @Test
++    public void textRemainsReadableOnBlack() {
++        Context context = createContext();
++        applyOverlay(context);
++        assertTrue(ColorUtils.calculateContrast(color(context, R.attr.colorOnSurface), Color.BLACK)
++                >= 4.5);
++    }
++}

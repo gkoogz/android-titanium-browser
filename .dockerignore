@@ -1,0 +1,4 @@
+# The builder installs packages only; source is mounted read-only at runtime.
+**
+!build/
+!build/test-container.Dockerfile

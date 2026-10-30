@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.library' version '8.7.3'
+}
+
+configurations { androidRuntime28; androidRuntime35 }
+tasks.register('prepareAndroidRuntimes', Sync) {
+    from configurations.androidRuntime28
+    from configurations.androidRuntime35
+    into layout.buildDirectory.dir('android-runtimes')
+}
+
+android {
+    namespace 'org.chromium.components.browser_ui.styles'
+    compileSdk 35
+    buildToolsVersion '35.0.1'
+    defaultConfig { minSdk 23 }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            dependsOn 'prepareAndroidRuntimes'
+            maxHeapSize = '2g'
+            systemProperty 'robolectric.offline', 'true'
+            systemProperty 'robolectric.dependency.dir', layout.buildDirectory.dir('android-runtimes').get().asFile.absolutePath
+            systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+        }
+    }
+}
+
+dependencies {
+    androidRuntime35 'org.robolectric:android-all-instrumented:15-robolectric-12650502-i7'
+    androidRuntime28 'org.robolectric:android-all-instrumented:9-robolectric-4913185-2-i7'
+    implementation 'androidx.recyclerview:recyclerview:1.4.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+}

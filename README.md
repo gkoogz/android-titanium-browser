@@ -23,6 +23,27 @@ For the latest builds, see [**Releases**](https://github.com/jqssun/android-tita
 
 ## Usage
 
+### OLED black backgrounds
+
+Enable **Settings → Appearance → OLED black backgrounds** for pure black browser
+surfaces, including the tab switcher, tab cards, toolbar, search and settings.
+Android's theme still supplies accent colors. No accent hue is hard-coded.
+This option uses dark controls; disabling it restores the saved Light, Dark or
+System default choice. See [OLED implementation and testing](docs/oled-black.md).
+
+### Bottom controls and tab cards
+
+On phones, **Settings → Address bar → Bottom** keeps the address field above the
+keyboard while editing, with suggestions growing upward. The tab switcher also
+places search at the bottom and its action controls directly above search.
+
+Choose **Settings → Tabs and tab groups → Tab switcher layout → Cards** for wide,
+overlapping tab previews. **Grid** remains the default. Both layouts keep short
+lists near the bottom when the address bar's Bottom setting is enabled.
+
+See [implementation and validation notes](docs/bottom-ui.md) for build checks and
+the Android acceptance checklist.
+
 ### Installing Extensions
 
 You can install extensions from the following sources:
