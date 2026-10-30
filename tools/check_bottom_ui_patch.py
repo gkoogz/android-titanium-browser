@@ -43,11 +43,18 @@ def check(root):
             old_hash = re.search(r"\nindex ([0-9a-f]+)\.\.", block).group(1)
             # A later patch may modify a file created or changed by an earlier patch.
             entries.setdefault(header[1], old_hash)
+    # Some pinned Vanadium patches restore files removed from Chromium.
+    # Validate their post-Vanadium hash instead of fetching a nonexistent URL.
+    restored_files = set()
+    for upstream in (REPO / "vanadium/patches").glob("*.patch"):
+        restored_files.update(re.findall(
+            r"^diff --git a/(\S+) b/\S+\nnew file mode ",
+            upstream.read_text(encoding="utf-8"), re.M))
     io_root = Path("\\\\?\\" + str(root)) if sys.platform == "win32" else root
 
     def fetch(entry):
         path, expected = entry
-        if set(expected) == {"0"}:
+        if set(expected) == {"0"} or path in restored_files:
             return
         url = f"https://raw.githubusercontent.com/chromium/chromium/{version}/{path}"
         for attempt in range(3):
@@ -81,6 +88,12 @@ def check(root):
         converted.write_text(text, encoding="utf-8", newline="\n")
         run_git(root, "apply", *[f"--include={path}" for path in sorted(affected)], str(converted))
         applied.append(upstream.name)
+    for path in restored_files.intersection(targets):
+        expected = entries[path]
+        if set(expected) != {"0"}:
+            data = (io_root / path).read_bytes()
+            actual = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+            assert actual.startswith(expected), f"Vanadium-restored source changed: {path}"
     for patch_file in PATCHES:
         run_git(root, "apply", "--check", str(patch_file))
         run_git(root, "apply", str(patch_file))

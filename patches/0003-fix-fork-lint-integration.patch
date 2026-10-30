@@ -1,0 +1,49 @@
+diff --git a/chrome/android/expectations/lint-suppressions.xml b/chrome/android/expectations/lint-suppressions.xml
+index d44f931d1a6361d04c140b800427ef65c57bd79b..19dd8fc6135eece467f57bc3d0959522174a1ac9 100644
+--- a/chrome/android/expectations/lint-suppressions.xml
++++ b/chrome/android/expectations/lint-suppressions.xml
+@@ -156,6 +156,31 @@
+   <issue id="UnusedIds" severity="ignore"/>
+   <issue id="UnusedQuantity" severity="ignore"/>
+   <issue id="UnusedResources">
++    <!-- Titanium removes the upstream widgets, first-run, password-sync and ad UI.
++         Keep lint enabled; ignore only their retained strings and branding assets. -->
++    <ignore regexp="R[.]drawable[.]themed_app_icon\b"/>
++    <ignore regexp="R[.]mipmap[.]layered_app_icon\b"/>
++    <ignore regexp="R[.]mipmap[.]layered_app_icon_background\b"/>
++    <ignore regexp="R[.]mipmap[.]layered_app_icon_foreground\b"/>
++    <ignore regexp="R[.]string[.]android_trusted_vault_banner_label\b"/>
++    <ignore regexp="R[.]string[.]android_trusted_vault_banner_sub_label_offer_opt_in\b"/>
++    <ignore regexp="R[.]string[.]android_trusted_vault_banner_sub_label_opted_in\b"/>
++    <ignore regexp="R[.]string[.]bookmark_widget_title\b"/>
++    <ignore regexp="R[.]string[.]chrome_additional_terms_of_service_title\b"/>
++    <ignore regexp="R[.]string[.]fre_activity_label\b"/>
++    <ignore regexp="R[.]string[.]google_terms_of_service_title\b"/>
++    <ignore regexp="R[.]string[.]help_context_check_passwords\b"/>
++    <ignore regexp="R[.]string[.]manage_passwords_text\b"/>
++    <ignore regexp="R[.]string[.]passwords_check_description\b"/>
++    <ignore regexp="R[.]string[.]passwords_check_title\b"/>
++    <ignore regexp="R[.]string[.]privacy_policy_title\b"/>
++    <ignore regexp="R[.]string[.]quick_action_search_widget_title\b"/>
++    <ignore regexp="R[.]string[.]search_widget_description\b"/>
++    <ignore regexp="R[.]string[.]search_widget_title\b"/>
++    <ignore regexp="R[.]string[.]site_settings_page_intrusive_ads_a11y\b"/>
++    <ignore regexp="R[.]string[.]site_settings_page_intrusive_ads_label\b"/>
++    <ignore regexp="R[.]string[.]site_settings_page_intrusive_allowed_sub_label\b"/>
++    <ignore regexp="R[.]string[.]site_settings_page_intrusive_blocked_sub_label\b"/>
+     <!-- Do not add new suppressions without rationale. -->
+     <!-- TODO(crbug.com/554115227): Remove temporarily suppress Actor notification prompt strings. -->
+     <ignore regexp="The resource `R.string.actor_notification_prompt_toast_title` appears to be unused"/>
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/password_manager/settings/PasswordSettings.java b/chrome/android/java/src/org/chromium/chrome/browser/password_manager/settings/PasswordSettings.java
+index 2a4891d78241b09461e09b518797539c7afab4ea..c5365c27143745b029e6c10a068e45543fd31e23 100644
+--- a/chrome/android/java/src/org/chromium/chrome/browser/password_manager/settings/PasswordSettings.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/password_manager/settings/PasswordSettings.java
+@@ -212,7 +212,7 @@
+         Bundle extras = getArguments();
+         assert extras.containsKey(PasswordManagerHelper.MANAGE_PASSWORDS_REFERRER)
+                 : "PasswordSettings must be launched with a manage-passwords-referrer fragment"
+-                        + "argument, but none was provided.";
++                        + " argument, but none was provided.";
+         return extras.getInt(PasswordManagerHelper.MANAGE_PASSWORDS_REFERRER);
+     }
+ 
