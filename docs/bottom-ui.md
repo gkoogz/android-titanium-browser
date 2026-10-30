@@ -47,7 +47,8 @@ The home page puts its fake search field after the other page elements and fills
 short pages to the scroll viewport, using bottom gravity. It retains status-bar
 insets, tracks viewport resizing, and restores the original order, padding and
 minimum height when Top mode is selected. Preference and viewport observers are
-removed when the view detaches.
+removed when the view detaches. The bottom toolbar stays at its own origin during
+home search focus and scrolling, keeping the editing field above the keyboard.
 
 ## Automated validation
 
@@ -81,7 +82,7 @@ message cards, bottom padding, smaller viewports, and closing first/middle/last 
 
 Chromium's test suite also registers real-animator coordinate checks and home-page
 ordering, inset, scrolling, keyboard-viewport and preference regression cases.
-The focused animation, home-page, binder and toolbar suites passed 196 cases on
+The focused animation, home-page, binder and toolbar suites passed 204 cases on
 Android API 29 and 36. This is a subset of Chromium's tests. The standalone Gradle
 harness does not verify native startup, URL editing, thumbnails or transitions.
 

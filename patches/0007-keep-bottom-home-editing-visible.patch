@@ -1,0 +1,139 @@
+diff --git a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/ToolbarPhone.java b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/ToolbarPhone.java
+index efb5b0b4bb31f44a41da2934170d259d7aadbdc9..08cc32559ec77e68038f1fd9d9c3c73893319e43 100644
+--- a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/ToolbarPhone.java
++++ b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/ToolbarPhone.java
+@@ -1090,7 +1090,15 @@
+         }
+     }
+ 
+-    private float getLocationBarTranslationY() {
++    @VisibleForTesting
++    float getLocationBarTranslationY() {
++        // Bottom controls already occupy their final position above the keyboard.
++        // The home search bounds are measured from the top of the page, not this toolbar.
++        if (mBrowserControlsStateProvider != null
++                && mBrowserControlsStateProvider.getControlsPosition() == ControlsPosition.BOTTOM) {
++            return 0f;
++        }
++
+         NewTabPageDelegate ntpDelegate = getToolbarDataProvider().getNewTabPageDelegate();
+         ntpDelegate.getSearchBoxBounds(mNtpSearchBoxBounds, mNtpSearchBoxTranslation);
+         float translationY = mNtpSearchBoxBounds.top - mLocationBar.getPhoneCoordinator().getTop();
+@@ -1624,8 +1632,16 @@
+      * Update the y translation of the buttons to make it appear as if they were scrolling with the
+      * new tab page.
+      */
+-    private void updateButtonsTranslationY() {
+-        int transY = mTabSwitcherState == STATIC_TAB ? Math.min(mNtpSearchBoxTranslation.y, 0) : 0;
++    @VisibleForTesting
++    void updateButtonsTranslationY() {
++        boolean bottomControls =
++                mBrowserControlsStateProvider != null
++                        && mBrowserControlsStateProvider.getControlsPosition()
++                                == ControlsPosition.BOTTOM;
++        int transY =
++                !bottomControls && mTabSwitcherState == STATIC_TAB
++                        ? Math.min(mNtpSearchBoxTranslation.y, 0)
++                        : 0;
+ 
+         mToolbarButtonsContainer.setTranslationY(transY);
+         mHomeButton.setTranslationY(transY);
+diff --git a/chrome/android/junit/BUILD.gn b/chrome/android/junit/BUILD.gn
+index fa443a38a77bbee588e0033a694ddf5bdb6f9ab8..b0f00f17fef8b8cad227ac303820ad8b2ccfa77b 100644
+--- a/chrome/android/junit/BUILD.gn
++++ b/chrome/android/junit/BUILD.gn
+@@ -1586,6 +1586,7 @@
+       "src/org/chromium/chrome/browser/toolbar/ToolbarIphControllerUnitTest.java",
+       "src/org/chromium/chrome/browser/toolbar/ToolbarTabControllerImplTest.java",
+       "src/org/chromium/chrome/browser/toolbar/adaptive/OptionalNewTabButtonControllerActivityTest.java",
++      "src/org/chromium/chrome/browser/toolbar/top/BottomNtpToolbarPhoneUnitTest.java",
+     ]
+ 
+     deps = [
+diff --git a/chrome/android/junit/src/org/chromium/chrome/browser/toolbar/top/BottomNtpToolbarPhoneUnitTest.java b/chrome/android/junit/src/org/chromium/chrome/browser/toolbar/top/BottomNtpToolbarPhoneUnitTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..49659525659ba59ad43cb768ba56d39751f6fc9a
+--- /dev/null
++++ b/chrome/android/junit/src/org/chromium/chrome/browser/toolbar/top/BottomNtpToolbarPhoneUnitTest.java
+@@ -0,0 +1,81 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.toolbar.top;
++
++import static org.junit.Assert.assertEquals;
++import static org.mockito.Mockito.CALLS_REAL_METHODS;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++import android.graphics.Point;
++import android.view.ViewGroup;
++import android.widget.ImageView;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.robolectric.annotation.Config;
++import org.robolectric.util.ReflectionHelpers;
++
++import org.chromium.base.test.BaseRobolectricTestRunner;
++import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
++import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
++
++/** Keeps the bottom toolbar fixed when the home page focuses or scrolls. */
++@RunWith(BaseRobolectricTestRunner.class)
++@Config(manifest = Config.NONE, sdk = {29, 36})
++public class BottomNtpToolbarPhoneUnitTest {
++    private ToolbarPhone mToolbar;
++    private BrowserControlsStateProvider mControls;
++    private ViewGroup mButtons;
++    private ImageView mHome;
++    private Point mSearchTranslation;
++
++    @Before
++    public void setUp() {
++        mToolbar = mock(ToolbarPhone.class, CALLS_REAL_METHODS);
++        mControls = mock(BrowserControlsStateProvider.class);
++        mButtons = mock(ViewGroup.class);
++        mHome = mock(ImageView.class);
++        mSearchTranslation = new Point(0, -180);
++        ReflectionHelpers.setField(mToolbar, "mBrowserControlsStateProvider", mControls);
++        ReflectionHelpers.setField(mToolbar, "mToolbarButtonsContainer", mButtons);
++        ReflectionHelpers.setField(mToolbar, "mHomeButton", mHome);
++        ReflectionHelpers.setField(mToolbar, "mNtpSearchBoxTranslation", mSearchTranslation);
++        ReflectionHelpers.setField(mToolbar, "mTabSwitcherState", ToolbarPhone.STATIC_TAB);
++    }
++
++    @Test
++    public void bottomEditingStaysAtToolbarOrigin() {
++        when(mControls.getControlsPosition()).thenReturn(ControlsPosition.BOTTOM);
++        assertEquals(0f, mToolbar.getLocationBarTranslationY(), 0f);
++    }
++
++    @Test
++    public void bottomButtonsIgnoreHomePageScroll() {
++        when(mControls.getControlsPosition()).thenReturn(ControlsPosition.BOTTOM);
++        mToolbar.updateButtonsTranslationY();
++        verify(mButtons).setTranslationY(0f);
++        verify(mHome).setTranslationY(0f);
++    }
++
++    @Test
++    public void topButtonsFollowHomePageScroll() {
++        when(mControls.getControlsPosition()).thenReturn(ControlsPosition.TOP);
++        mToolbar.updateButtonsTranslationY();
++        verify(mButtons).setTranslationY(-180f);
++        verify(mHome).setTranslationY(-180f);
++    }
++
++    @Test
++    public void topButtonsClampPositiveHomePageTranslation() {
++        when(mControls.getControlsPosition()).thenReturn(ControlsPosition.TOP);
++        mSearchTranslation.y = 180;
++        mToolbar.updateButtonsTranslationY();
++        verify(mButtons).setTranslationY(0f);
++        verify(mHome).setTranslationY(0f);
++    }
++}
