@@ -1,0 +1,594 @@
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
+index 759139e74b697787ab8b507d7067251a96b36ddb..ac53767ef439d6b624825893312933cede44c3bc 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
+@@ -159,6 +159,7 @@
+     private @Nullable TabListEmptyCoordinator mTabListEmptyCoordinator;
+     private boolean mIsEmptyViewInitialized;
+     private @Nullable Runnable mAwaitingLayoutRunnable;
++    private @Nullable Runnable mCancelAwaitingLayoutPreDraw;
+     private @Nullable PropertyModel mAwaitingModel;
+     private @TabActionState int mTabActionState;
+ 
+@@ -599,6 +600,7 @@
+             Log.d(TAG, "Dropping existing AwaitingLayoutRunnable for new tab %d", tabId);
+             mAwaitingLayoutRunnable = null;
+             mAwaitingModel = null;
++            cancelAwaitingLayoutPreDraw();
+         }
+         int index = getIndexFromTabId(tabId);
+         if (index == TabModel.INVALID_TAB_INDEX) {
+@@ -607,7 +609,7 @@
+         }
+         mAwaitingLayoutRunnable = r;
+         mAwaitingModel = mModelList.get(index).model;
+-        mRecyclerView.runOnNextLayout(this::checkAwaitingLayout);
++        checkAwaitingLayout();
+     }
+ 
+     /** Returns the position and offset of the first visible element in the list. */
+@@ -986,6 +988,7 @@
+             mTabSwitcherDragHandler.destroy();
+         }
+         mTabListFaviconProvider.destroy();
++        cancelAwaitingLayoutPreDraw();
+         mAwaitingLayoutRunnable = null;
+         mAwaitingModel = null;
+     }
+@@ -1102,8 +1105,33 @@
+         return mMediator.getRecentlySwipedTabSupplier();
+     }
+ 
++    private void cancelAwaitingLayoutPreDraw() {
++        if (mCancelAwaitingLayoutPreDraw == null) return;
++        mCancelAwaitingLayoutPreDraw.run();
++        mCancelAwaitingLayoutPreDraw = null;
++    }
++
+     private void checkAwaitingLayout() {
++        if (mAwaitingLayoutRunnable == null || mCancelAwaitingLayoutPreDraw != null) return;
++        mCancelAwaitingLayoutPreDraw =
++                TabSwitcherAnimationGeometry.runAfterStableLayout(
++                        mRecyclerView,
++                        () -> {
++                            mCancelAwaitingLayoutPreDraw = null;
++                            provideAwaitingLayout();
++                        });
++    }
++
++    private void provideAwaitingLayout() {
+         if (mAwaitingLayoutRunnable != null) {
++            RecyclerView.ItemAnimator animator = mRecyclerView.getItemAnimator();
++            if (animator != null && animator.isRunning()) {
++                // Do not aim at a card which is still moving from a model update.
++                animator.endAnimations();
++                mRecyclerView.requestLayout();
++                checkAwaitingLayout();
++                return;
++            }
+             int index = mModelList.indexFromModel(mAwaitingModel);
+             if (index == TabModel.INVALID_TAB_INDEX) return;
+             SimpleRecyclerViewAdapter.ViewHolder holder =
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListRecyclerView.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListRecyclerView.java
+index c5fe03c5d0901cdf533299546d3c55a7e4f0c43c..d1c34fa1efa99d048eb8326db397e48564c0ba89 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListRecyclerView.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListRecyclerView.java
+@@ -168,8 +168,9 @@
+         if (holder == null || tabIndex == TabModel.INVALID_TAB_INDEX) return rect;
+         ViewLookupCachingFrameLayout root = (ViewLookupCachingFrameLayout) holder.itemView;
+         View v = root.fastFindViewById(R.id.tab_thumbnail);
+-        if (v != null) v.getGlobalVisibleRect(rect);
+-        return rect;
++        // Clipping is a viewport concern, not the target image's geometry. Include ancestor
++        // scales/translations and preserve the complete thumbnail when it is partly offscreen.
++        return v == null ? rect : TabSwitcherAnimationGeometry.getGlobalBounds(v);
+     }
+ 
+     /**
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometry.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometry.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..aa04f4e14597d96f590217126c8cb9ef1f17da89
+--- /dev/null
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometry.java
+@@ -0,0 +1,87 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.tasks.tab_management;
++
++import android.graphics.Matrix;
++import android.graphics.Rect;
++import android.graphics.RectF;
++import android.view.View;
++import android.view.ViewParent;
++
++import androidx.core.view.OneShotPreDrawListener;
++
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.build.annotations.Nullable;
++
++/** Final-frame geometry shared by tab thumbnails and the page-to-switcher transition. */
++@NullMarked
++final class TabSwitcherAnimationGeometry {
++    private TabSwitcherAnimationGeometry() {}
++
++    static Rect getGlobalBounds(View view) {
++        Matrix matrix = new Matrix();
++        view.transformMatrixToGlobal(matrix);
++        RectF bounds = new RectF(0, 0, view.getWidth(), view.getHeight());
++        matrix.mapRect(bounds);
++        Rect result = new Rect();
++        bounds.round(result);
++        return result;
++    }
++
++    /** Returns a cancellation callback; detaching the view also removes the pre-draw listener. */
++    static Runnable runAfterStableLayout(View view, Runnable onReady) {
++        StableLayoutCallback callback = new StableLayoutCallback(view, onReady);
++        callback.schedule();
++        return callback::cancel;
++    }
++
++    private static boolean hasPendingLayout(View view) {
++        View current = view;
++        while (true) {
++            if (current.isLayoutRequested()) return true;
++            ViewParent parent = current.getParent();
++            if (!(parent instanceof View)) return false;
++            current = (View) parent;
++        }
++    }
++
++    private static final class StableLayoutCallback {
++        private final View mView;
++        private @Nullable Runnable mOnReady;
++        private @Nullable OneShotPreDrawListener mListener;
++
++        StableLayoutCallback(View view, Runnable onReady) {
++            mView = view;
++            mOnReady = onReady;
++        }
++
++        void schedule() {
++            mListener = OneShotPreDrawListener.add(mView, this::onPreDraw);
++            mView.invalidate();
++        }
++
++        private void onPreDraw() {
++            mListener = null;
++            if (mOnReady == null) return;
++            // A parent's onLayout listener can relocate/resize the pane after the RecyclerView
++            // has completed its own layout. Never capture that intermediate card position.
++            if (hasPendingLayout(mView)) {
++                schedule();
++                return;
++            }
++            Runnable onReady = mOnReady;
++            mOnReady = null;
++            onReady.run();
++        }
++
++        void cancel() {
++            mOnReady = null;
++            if (mListener != null) {
++                mListener.removeListener();
++                mListener = null;
++            }
++        }
++    }
++}
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometryUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometryUnitTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..53f41318d0c1761c6907aa7958a43bfc5d868c4c
+--- /dev/null
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometryUnitTest.java
+@@ -0,0 +1,231 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.tasks.tab_management;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertTrue;
++
++import android.app.Activity;
++import android.graphics.Bitmap;
++import android.graphics.Matrix;
++import android.graphics.Rect;
++import android.graphics.drawable.BitmapDrawable;
++import android.util.Size;
++import android.view.View;
++import android.widget.FrameLayout;
++import android.widget.ImageView;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.robolectric.Robolectric;
++import org.robolectric.annotation.Config;
++import org.robolectric.annotation.LooperMode;
++
++import org.chromium.base.test.BaseRobolectricTestRunner;
++import org.chromium.chrome.browser.hub.ShrinkExpandAnimator;
++import org.chromium.chrome.browser.hub.ShrinkExpandImageView;
++import org.chromium.chrome.browser.tab.TabUtils;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/** Measures the real view hierarchy and final bitmap crop used in the page/card handoff. */
++@RunWith(BaseRobolectricTestRunner.class)
++@Config(sdk = {29, 36})
++@LooperMode(LooperMode.Mode.PAUSED)
++public class TabSwitcherAnimationGeometryUnitTest {
++    private Activity mActivity;
++    private FrameLayout mRoot;
++    private View mDecor;
++
++    @Before
++    public void setUp() {
++        mActivity = Robolectric.buildActivity(Activity.class).setup().get();
++        mRoot = new FrameLayout(mActivity);
++        mActivity.setContentView(mRoot);
++        mDecor = mActivity.getWindow().getDecorView();
++        layout();
++    }
++
++    private void layout() {
++        mDecor.measure(
++                View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY),
++                View.MeasureSpec.makeMeasureSpec(2000, View.MeasureSpec.EXACTLY));
++        mDecor.layout(0, 0, 1000, 2000);
++    }
++
++    private View addThumbnail(FrameLayout parent, int width, int height, int left, int top) {
++        View thumbnail = new View(mActivity);
++        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(width, height);
++        params.leftMargin = left;
++        params.topMargin = top;
++        parent.addView(thumbnail, params);
++        layout();
++        return thumbnail;
++    }
++
++    @Test
++    public void boundsPreserveTheUnclippedThumbnail() {
++        FrameLayout pane = new FrameLayout(mActivity);
++        mRoot.addView(pane, new FrameLayout.LayoutParams(400, 200));
++        View thumbnail = addThumbnail(pane, 300, 500, 20, 120);
++        Rect visible = new Rect();
++        thumbnail.getGlobalVisibleRect(visible);
++        Rect bounds = TabSwitcherAnimationGeometry.getGlobalBounds(thumbnail);
++        assertEquals(300, bounds.width());
++        assertEquals(500, bounds.height());
++        assertTrue(visible.height() < bounds.height());
++        int[] location = new int[2];
++        thumbnail.getLocationOnScreen(location);
++        assertEquals(location[0], bounds.left);
++        assertEquals(location[1], bounds.top);
++    }
++
++    @Test
++    public void boundsIncludeAncestorScaleAndTranslation() {
++        FrameLayout card = new FrameLayout(mActivity);
++        mRoot.addView(card, new FrameLayout.LayoutParams(500, 700));
++        View thumbnail = addThumbnail(card, 200, 400, 20, 30);
++        card.setPivotX(0);
++        card.setPivotY(0);
++        card.setScaleX(0.75f);
++        card.setScaleY(0.5f);
++        card.setTranslationX(40);
++        card.setTranslationY(60);
++        int[] parentLocation = new int[2];
++        card.getLocationOnScreen(parentLocation);
++        Rect bounds = TabSwitcherAnimationGeometry.getGlobalBounds(thumbnail);
++        assertEquals(
++                new Rect(
++                        parentLocation[0] + 15,
++                        parentLocation[1] + 15,
++                        parentLocation[0] + 165,
++                        parentLocation[1] + 215),
++                bounds);
++    }
++
++    @Test
++    public void layoutCompletionDoesNotSupplyGeometryBeforePreDraw() {
++        View thumbnail = addThumbnail(mRoot, 300, 500, 20, 240);
++        List<Rect> supplied = new ArrayList<>();
++        TabSwitcherAnimationGeometry.runAfterStableLayout(
++                thumbnail,
++                () -> supplied.add(TabSwitcherAnimationGeometry.getGlobalBounds(thumbnail)));
++        layout();
++        assertEquals(0, supplied.size());
++        thumbnail.getViewTreeObserver().dispatchOnPreDraw();
++        assertEquals(1, supplied.size());
++        thumbnail.getViewTreeObserver().dispatchOnPreDraw();
++        assertEquals(1, supplied.size());
++    }
++
++    @Test
++    public void parentRelayoutAfterChildLayoutSuppliesOnlyFinalBounds() {
++        View thumbnail = addThumbnail(mRoot, 300, 500, 20, 240);
++        List<Rect> supplied = new ArrayList<>();
++        TabSwitcherAnimationGeometry.runAfterStableLayout(
++                thumbnail,
++                () -> supplied.add(TabSwitcherAnimationGeometry.getGlobalBounds(thumbnail)));
++        Rect intermediate = TabSwitcherAnimationGeometry.getGlobalBounds(thumbnail);
++        // Reproduce the bottom toolbar's onLayout listener changing the pane's margins
++        // after the thumbnail's own onLayoutCompleted has already fired.
++        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) thumbnail.getLayoutParams();
++        params.topMargin = 0;
++        thumbnail.setLayoutParams(params);
++        thumbnail.getViewTreeObserver().dispatchOnPreDraw();
++        assertEquals(0, supplied.size());
++        layout();
++        thumbnail.getViewTreeObserver().dispatchOnPreDraw();
++        assertEquals(1, supplied.size());
++        assertEquals(intermediate.top - 240, supplied.get(0).top);
++    }
++
++    @Test
++    public void cancellationAndDetachDoNotRunTheGeometryCallback() {
++        View thumbnail = addThumbnail(mRoot, 300, 500, 0, 0);
++        int[] count = {0};
++        Runnable cancel =
++                TabSwitcherAnimationGeometry.runAfterStableLayout(thumbnail, () -> count[0]++);
++        cancel.run();
++        thumbnail.getViewTreeObserver().dispatchOnPreDraw();
++        assertEquals(0, count[0]);
++        TabSwitcherAnimationGeometry.runAfterStableLayout(thumbnail, () -> count[0]++);
++        mRoot.removeView(thumbnail);
++        mRoot.getViewTreeObserver().dispatchOnPreDraw();
++        assertEquals(0, count[0]);
++    }
++
++    private ShrinkExpandImageView image(Rect initial, Bitmap bitmap) {
++        ShrinkExpandImageView image = new ShrinkExpandImageView(mActivity);
++        mRoot.addView(image, new FrameLayout.LayoutParams(initial.width(), initial.height()));
++        image.resetKeepingBitmap(initial);
++        image.setImageBitmap(bitmap);
++        layout();
++        return image;
++    }
++
++    private void assertCropMatchesCard(Rect initial, Rect target, boolean compareInitial) {
++        Bitmap bitmap = Bitmap.createBitmap(1000, 500, Bitmap.Config.ARGB_8888);
++        bitmap.setDensity(Bitmap.DENSITY_NONE);
++        ShrinkExpandImageView image = image(initial, bitmap);
++        ShrinkExpandAnimator animator = new ShrinkExpandAnimator(image, initial, target, 0);
++        Rect card = compareInitial ? initial : target;
++        animator.setRect(card);
++        ImageView thumbnail = new ImageView(mActivity);
++        TabUtils.setDrawableAndUpdateImageMatrix(
++                thumbnail,
++                new BitmapDrawable(mActivity.getResources(), bitmap),
++                new Size(card.width(), card.height()));
++        thumbnail.layout(0, 0, card.width(), card.height());
++        Matrix mapping = new Matrix(image.getMatrix());
++        mapping.preConcat(image.getImageMatrix());
++        float[] actual = {0, 0, 1000, 500};
++        float[] expected = actual.clone();
++        mapping.mapPoints(actual);
++        thumbnail.getImageMatrix().mapPoints(expected);
++        for (int i = 0; i < actual.length; i += 2) {
++            assertEquals(expected[i], actual[i] + image.getLeft() - card.left, 0.51f);
++            assertEquals(expected[i + 1], actual[i + 1] + image.getTop() - card.top, 0.51f);
++        }
++    }
++
++    @Test
++    public void shrinkEndsWithExactlyTheCardsTallCrop() {
++        assertCropMatchesCard(new Rect(0, 0, 1000, 500), new Rect(700, 600, 900, 1000), false);
++    }
++
++    @Test
++    public void expandStartsWithExactlyTheCardsTallCrop() {
++        assertCropMatchesCard(new Rect(700, 600, 900, 1000), new Rect(0, 0, 1000, 500), true);
++    }
++
++    @Test
++    public void bitmapScaleChangesContinuouslyAcrossTheMorph() {
++        Rect initial = new Rect(0, 0, 1000, 500);
++        Rect target = new Rect(700, 600, 900, 1000);
++        Bitmap bitmap = Bitmap.createBitmap(1000, 500, Bitmap.Config.ARGB_8888);
++        ShrinkExpandImageView image = image(initial, bitmap);
++        ShrinkExpandAnimator animator = new ShrinkExpandAnimator(image, initial, target, 0);
++        float previous = 1;
++        for (int step = 0; step <= 100; step++) {
++            float fraction = step / 100f;
++            Rect current =
++                    new Rect(
++                            Math.round(700 * fraction),
++                            Math.round(600 * fraction),
++                            Math.round(1000 - 100 * fraction),
++                            Math.round(500 + 500 * fraction));
++            animator.setRect(current);
++            float[] values = new float[9];
++            image.getImageMatrix().getValues(values);
++            float scale = values[Matrix.MSCALE_X] * image.getScaleX();
++            assertTrue(Float.isFinite(scale));
++            assertEquals(1 - 0.2f * fraction, scale, 0.001f);
++            assertTrue(Math.abs(scale - previous) < 0.003f);
++            previous = scale;
++        }
++    }
++}
+diff --git a/chrome/android/features/tab_ui/tab_management_java_sources.gni b/chrome/android/features/tab_ui/tab_management_java_sources.gni
+index 9a3446368f2a7c96d7aa8fd71066ecccbd27b3f8..53550f557945286104590a67aebe9eeb4b971571 100644
+--- a/chrome/android/features/tab_ui/tab_management_java_sources.gni
++++ b/chrome/android/features/tab_ui/tab_management_java_sources.gni
+@@ -136,6 +136,7 @@
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListContainerProperties.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListContainerViewBinder.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java",
++  "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometry.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorAction.java",
+   "//chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorActionProperties.java",
+diff --git a/chrome/android/junit/BUILD.gn b/chrome/android/junit/BUILD.gn
+index b0f00f17fef8b8cad227ac303820ad8b2ccfa77b..83536854b4ff6a010a3acd1c6655d9c9dbaad7e6 100644
+--- a/chrome/android/junit/BUILD.gn
++++ b/chrome/android/junit/BUILD.gn
+@@ -1548,6 +1548,7 @@
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorShareActionUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListEditorUngroupActionUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java",
++      "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometryUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabListMediatorUnitTest.java",
+       "//chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSearchOverlayCoordinatorUnitTest.java",
+diff --git a/chrome/browser/hub/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandAnimator.java b/chrome/browser/hub/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandAnimator.java
+index eafb684ec109e2848018b34d35da633a942a6b6c..45353c62812c88a9d79482a4538e356d3a3f3e73 100644
+--- a/chrome/browser/hub/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandAnimator.java
++++ b/chrome/browser/hub/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandAnimator.java
+@@ -94,10 +94,9 @@
+         mView.setScaleY(scaleY);
+         mView.setTranslationX(
+                 (float) rect.left
+-                        - Math.round(mInitialRect.left + (1.0 - scaleX) * initialRectWidth / 2.0));
++                        - (mInitialRect.left + (1.0f - scaleX) * initialRectWidth / 2.0f));
+         mView.setTranslationY(
+-                (float) rect.top
+-                        - Math.round(mInitialRect.top + (1.0 - scaleY) * initialRectHeight / 2.0));
++                (float) rect.top - (mInitialRect.top + (1.0f - scaleY) * initialRectHeight / 2.0f));
+ 
+         // If there is no image we don't need to do anything else.
+         mImageMatrix.reset();
+@@ -108,7 +107,29 @@
+         // the view to ensure the image appears as if it is scaling with the view. Scaling the
+         // view by itself will not change the image size which would lead to the wrong appearance.
+         final int bitmapWidth = bitmap.getWidth();
+-        final float scale = (float) currentRectWidth / bitmapWidth;
++        // The card renderer top-center crops to fill BOTH dimensions. Interpolate between
++        // that crop and the full page's width-fit image so a tall card doesn't suddenly zoom
++        // when the overlay is replaced by its thumbnail.
++        final int bitmapHeight = bitmap.getHeight();
++        boolean shrinking = mInitialRect.width() >= mFinalRect.width();
++        float initialImageScale = (float) initialRectWidth / bitmapWidth;
++        float finalImageScale = (float) mFinalRect.width() / bitmapWidth;
++        if (shrinking) {
++            finalImageScale = Math.max(finalImageScale, (float) mFinalRect.height() / bitmapHeight);
++        } else {
++            initialImageScale =
++                    Math.max(initialImageScale, (float) initialRectHeight / bitmapHeight);
++        }
++        float widthChange = mFinalRect.width() - initialRectWidth;
++        float heightChange = mFinalRect.height() - initialRectHeight;
++        float progress =
++                widthChange != 0
++                        ? (currentRectWidth - initialRectWidth) / widthChange
++                        : heightChange != 0
++                                ? (currentRectHeight - initialRectHeight) / heightChange
++                                : 1;
++        progress = Math.max(0, Math.min(1, progress));
++        final float scale = initialImageScale + (finalImageScale - initialImageScale) * progress;
+         final float xFactor = scale / scaleX;
+         final float yFactor = scale / scaleY;
+         mImageMatrix.setScale(xFactor, yFactor);
+diff --git a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandHubLayoutAnimatorProvider.java b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandHubLayoutAnimatorProvider.java
+index 9ee6b8c66d3eafea09bae051eae94cfb27856c4d..2b083a7e821e8597e812db419d34d4c1a0bf572f 100644
+--- a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandHubLayoutAnimatorProvider.java
++++ b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandHubLayoutAnimatorProvider.java
+@@ -404,6 +404,18 @@
+ 
+         AnimatorSet animatorSet = new AnimatorSet();
+         var builder = animatorSet.play(shrinkExpandAnimator).with(cornerAnimator);
++        if (isShrink) {
++            // The cached card can be lower resolution than the live page capture. Blend the
++            // last few frames of the eased motion into it instead of abruptly swapping images.
++            ObjectAnimator thumbnailHandoff =
++                    ObjectAnimator.ofFloat(mShrinkExpandImageView, View.ALPHA, 1.0f, 0.0f);
++            thumbnailHandoff.setInterpolator(
++                    fraction -> {
++                        float tail = Math.max(0, Math.min(1, (fraction - 0.85f) / 0.15f));
++                        return tail * tail * (3 - 2 * tail);
++                    });
++            builder.with(thumbnailHandoff);
++        }
+         if (fadeAnimator != null) {
+             builder.with(fadeAnimator);
+         }
+@@ -429,17 +441,9 @@
+                     @Override
+                     public void onEnd(boolean wasForcedToFinish) {
+                         assumeNonNull(mShrinkExpandImageView);
+-                        // At this point the mShrinkExpandImageView is located at
+-                        // animationData#getFinalRect(); however, its layout params still has its
+-                        // dimensions as those from animationData#getInitialRect(). This is because
+-                        // the animator applies translate and scale transformations rather than
+-                        // manipulating the layout parameters of the view. Here we want to
+-                        // explicitly set the layout params of the view to match getFinalRect().
+-                        // This is effectively a no-op in production as the view will be removed
+-                        // before the next layout pass. However, it makes testing easier because
+-                        // the layout dimensions match the expected final state rather than being
+-                        // transformed from the initial layout parameters.
+-                        mShrinkExpandImageView.resetKeepingBitmap(animationData.getFinalRect());
++                        // Retain the final transform and crop until afterEnd removes the overlay.
++                        // Resetting the image matrix/layout here can expose a different image
++                        // scale and request another pane layout during the thumbnail handoff.
+ 
+                         if (mAnimationTracker != null) {
+                             mWasForcedToFinish = wasForcedToFinish;
+diff --git a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandHubLayoutAnimatorProviderUnitTest.java b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandHubLayoutAnimatorProviderUnitTest.java
+index e0c40d2807196eb5d4c60bf9938fd1ad5c0d1ebd..8100141c808126915481ca330ab39fb060eff85c 100644
+--- a/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandHubLayoutAnimatorProviderUnitTest.java
++++ b/chrome/browser/hub/internal/android/java/src/org/chromium/chrome/browser/hub/ShrinkExpandHubLayoutAnimatorProviderUnitTest.java
+@@ -48,6 +48,7 @@
+ import org.mockito.junit.MockitoRule;
+ import org.robolectric.Robolectric;
+ import org.robolectric.android.controller.ActivityController;
++import org.robolectric.annotation.Config;
+ 
+ import org.chromium.base.Callback;
+ import org.chromium.base.supplier.SyncOneshotSupplierImpl;
+@@ -67,6 +68,7 @@
+ 
+ /** Unit tests for {@link ShrinkExpandHubLayoutAnimatorProvider}. */
+ @RunWith(BaseRobolectricTestRunner.class)
++@Config(sdk = {29, 36})
+ public class ShrinkExpandHubLayoutAnimatorProviderUnitTest {
+     private static final int WIDTH = 100;
+     private static final int HEIGHT = 1000;
+@@ -806,6 +808,17 @@
+                             @Override
+                             public void onEnd(boolean wasForcedToFinish) {
+                                 assertImageViewRect(imageView, finalRect);
++                                // Keep the final transform through the handoff; a layout/matrix
++                                // reset here would expose a different bitmap crop before removal.
++                                assertEquals(
++                                        (float) finalRect.width() / initialRect.width(),
++                                        imageView.getScaleX(),
++                                        EPSILON);
++                                assertEquals(
++                                        (float) finalRect.height() / initialRect.height(),
++                                        imageView.getScaleY(),
++                                        EPSILON);
++                                assertEquals(isShrink ? 0f : 1f, imageView.getAlpha(), EPSILON);
+                                 float expectedAlpha;
+                                 if (toolbarFades) {
+                                     expectedAlpha = isShrink ? 1.0f : 0.0f;
+@@ -1091,9 +1104,18 @@
+ 
+     private void assertImageViewRect(ShrinkExpandImageView imageView, Rect rect) {
+         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) imageView.getLayoutParams();
+-        assertEquals("Width mismatch", rect.width(), params.width);
+-        assertEquals("Height mismatch", rect.height(), params.height);
+-        assertEquals("Left margin mismatch", rect.left, params.leftMargin);
+-        assertEquals("Top margin mismatch", rect.top, params.topMargin);
++        float left =
++                params.leftMargin
++                        + imageView.getTranslationX()
++                        + params.width * (1 - imageView.getScaleX()) / 2;
++        float top =
++                params.topMargin
++                        + imageView.getTranslationY()
++                        + params.height * (1 - imageView.getScaleY()) / 2;
++        assertEquals("Width mismatch", rect.width(), params.width * imageView.getScaleX(), EPSILON);
++        assertEquals(
++                "Height mismatch", rect.height(), params.height * imageView.getScaleY(), EPSILON);
++        assertEquals("Left bound mismatch", rect.left, left, EPSILON);
++        assertEquals("Top bound mismatch", rect.top, top, EPSILON);
+     }
+ }

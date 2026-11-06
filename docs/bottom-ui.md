@@ -75,6 +75,13 @@ minimum height when Top mode is selected. Preference and viewport observers are
 removed when the view detaches. The bottom toolbar stays at its own origin during
 home search focus and scrolling, keeping the editing field above the keyboard.
 
+Page-to-switcher transitions obtain their thumbnail target at a stable pre-draw,
+after ancestor layouts and pending card moves have settled. Target bounds include
+ancestor transforms and the complete thumbnail rather than a viewport-clipped
+rectangle. The animated bitmap interpolates to the same top-center fill crop used
+by the thumbnail, retaining its final transform until removal. A short blend at
+the end avoids a hard change between the page capture and cached preview.
+
 ## Automated validation
 
 Run the source integration check (requires Python 3, Git, internet and the submodule):
@@ -121,6 +128,11 @@ real close-animation and gesture-routing checks on API 29/36. These include side
 margins, retained fading cards, horizontal size/depth/alpha, outgoing size stability,
 both hands, selected-tab positioning, window centering, resizing, empty/single/long
 decks and mode restoration. Horizontal swipes are checked to bypass tab dismissal.
+
+The page/thumbnail transition repair passed 134 geometry, bitmap-crop, provider,
+card-layout and real close-animation checks on API 29/36. It covers the reproduced
+240-pixel parent relayout, clipping, transformed ancestors, cancellation, matched
+tall-card crops, continuous bitmap scaling and final-frame transform retention.
 
 ## Android acceptance before release
 
