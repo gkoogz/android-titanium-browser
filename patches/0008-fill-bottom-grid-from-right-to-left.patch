@@ -1,0 +1,189 @@
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+index a52d2e73df4a7b0809cc8cc292b56ee142a7f333..b5e505eb8eb14a826a9ca2116138be1a58e63787 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+@@ -32,8 +32,18 @@
+         if (mStacked == stacked && mBottomAnchored == bottomAnchored) return false;
+         mStacked = stacked;
+         mBottomAnchored = bottomAnchored;
++        // Keep the first row by the bottom controls, with later rows growing upward.
++        // Cards keep their existing overlap direction and drawing order.
++        setReverseLayout(bottomAnchored && !stacked);
+         requestLayout();
+         return true;
++    }
++
++    @Override
++    protected boolean isLayoutRTL() {
++        // Reverse column placement only. Changing the view's language direction would
++        // also mirror tab titles, close buttons and other contents.
++        return (mBottomAnchored && !mStacked) || super.isLayoutRTL();
+     }
+ 
+     boolean setCardHeight(int height) {
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java
+index e5f7b60d49ac8fe137e0877c0ea03c4c7f5f2f0c..71eb295d539a3b3599994924d5c963c93d931844 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java
+@@ -152,7 +152,7 @@
+     }
+     @Test public void scrolledLongGrid() {
+         populate(20, false, true);
+-        mView.scrollBy(0, 900);
++        mView.scrollBy(0, -900);
+         closeAndCheck(mManager.findFirstVisibleItemPosition());
+     }
+     @Test public void repeatedCloses() {
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+index 5d2694413ac2b4bb8b82d1e4163c27023688651e..6b3d015ca5a57b15d1aa30ea58931590da95b8f9 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+@@ -9,6 +9,7 @@
+ import static org.junit.Assert.assertTrue;
+ 
+ import android.app.Activity;
++import android.content.pm.ApplicationInfo;
+ import android.view.View;
+ import android.view.ViewGroup;
+ import android.widget.TextView;
+@@ -25,7 +26,7 @@
+ 
+ /** Real RecyclerView measurements and scrolling, using the production layout manager. */
+ @RunWith(BaseRobolectricTestRunner.class)
+-@Config(manifest = Config.NONE, sdk = 28)
++@Config(manifest = Config.NONE, sdk = {29, 36})
+ public class TabCardLayoutManagerUnitTest {
+     private Activity mActivity;
+     private RecyclerView mView;
+@@ -104,8 +105,11 @@
+         View first = mManager.findViewByPosition(0);
+         View second = mManager.findViewByPosition(1);
+         assertEquals(first.getTop(), second.getTop());
+-        assertEquals(180, second.getLeft());
+-        assertEquals(1000, mManager.findViewByPosition(2).getBottom());
++        assertEquals(180, first.getLeft());
++        assertEquals(0, second.getLeft());
++        assertEquals(1000, first.getBottom());
++        assertEquals(180, mManager.findViewByPosition(2).getLeft());
++        assertEquals(first.getTop(), mManager.findViewByPosition(2).getBottom());
+     }
+ 
+     @Test
+@@ -198,4 +202,117 @@
+         assertTrue(mManager.findViewByPosition(0).getTop() >= 0);
+         assertEquals(1000, mManager.findViewByPosition(1).getBottom());
+     }
++
++    @Test
++    public void singleGridTabStartsAtBottomRight() {
++        mManager.setSpanCount(2);
++        mManager.setPresentation(false, true);
++        mView.setPadding(10, 20, 10, 30);
++        layout(1, 1000);
++        assertEquals(180, mManager.findViewByPosition(0).getLeft());
++        assertEquals(350, mManager.findViewByPosition(0).getRight());
++        assertEquals(970, mManager.findViewByPosition(0).getBottom());
++    }
++
++    @Test
++    public void evenGridFillsLeftThenUp() {
++        mManager.setSpanCount(2);
++        mManager.setPresentation(false, true);
++        layout(4, 1000);
++        assertEquals(1000, mManager.findViewByPosition(0).getBottom());
++        assertEquals(1000, mManager.findViewByPosition(1).getBottom());
++        assertEquals(600, mManager.findViewByPosition(2).getBottom());
++        assertEquals(600, mManager.findViewByPosition(3).getBottom());
++        assertEquals(180, mManager.findViewByPosition(2).getLeft());
++        assertEquals(0, mManager.findViewByPosition(3).getLeft());
++    }
++
++    @Test
++    public void widerGridFillsFromBottomRight() {
++        mManager.setSpanCount(3);
++        mManager.setPresentation(false, true);
++        layout(5, 1000);
++        assertEquals(240, mManager.findViewByPosition(0).getLeft());
++        assertEquals(120, mManager.findViewByPosition(1).getLeft());
++        assertEquals(0, mManager.findViewByPosition(2).getLeft());
++        assertEquals(1000, mManager.findViewByPosition(0).getBottom());
++        assertEquals(600, mManager.findViewByPosition(3).getBottom());
++        assertEquals(240, mManager.findViewByPosition(3).getLeft());
++        assertEquals(120, mManager.findViewByPosition(4).getLeft());
++    }
++
++    @Test
++    public void longBottomGridScrollsUpAndBackDown() {
++        mManager.setSpanCount(2);
++        mManager.setPresentation(false, true);
++        layout(50, 1000);
++        assertEquals(1000, mManager.findViewByPosition(0).getBottom());
++        assertFalse(mView.canScrollVertically(1));
++        assertTrue(mView.canScrollVertically(-1));
++        mView.scrollBy(0, -800);
++        assertTrue(mManager.findFirstVisibleItemPosition() > 0);
++        mView.scrollToPosition(49);
++        layout(50, 1000);
++        assertEquals(49, mManager.findLastVisibleItemPosition());
++        mView.scrollToPosition(0);
++        layout(50, 1000);
++        assertEquals(0, mManager.findFirstVisibleItemPosition());
++        assertEquals(1000, mManager.findViewByPosition(0).getBottom());
++    }
++
++    @Test
++    public void bottomGridRestoresTopOrderAndCardStack() {
++        mManager.setSpanCount(2);
++        mManager.setPresentation(false, true);
++        layout(3, 1000);
++        mManager.setPresentation(false, false);
++        layout(3, 1000);
++        assertEquals(0, mManager.findViewByPosition(0).getLeft());
++        assertEquals(0, mManager.findViewByPosition(0).getTop());
++        assertEquals(180, mManager.findViewByPosition(1).getLeft());
++        assertEquals(400, mManager.findViewByPosition(2).getTop());
++        mManager.setPresentation(true, true);
++        mManager.setSpanCount(1);
++        mView.invalidateItemDecorations();
++        layout(3, 1000);
++        assertTrue(mManager.findViewByPosition(1).getTop()
++                > mManager.findViewByPosition(0).getTop());
++        assertEquals(1000, mManager.findViewByPosition(2).getBottom());
++    }
++
++    @Test
++    public void bottomGridReservesFullWidthMessageRow() {
++        mManager.setSpanCount(2);
++        mManager.setSpanSizeLookup(new androidx.recyclerview.widget.GridLayoutManager.SpanSizeLookup() {
++            @Override public int getSpanSize(int position) { return position == 2 ? 2 : 1; }
++        });
++        mManager.setPresentation(false, true);
++        layout(4, 1400);
++        assertEquals(1400, mManager.findViewByPosition(0).getBottom());
++        assertEquals(1000, mManager.findViewByPosition(2).getBottom());
++        assertEquals(0, mManager.findViewByPosition(2).getLeft());
++        assertEquals(360, mManager.findViewByPosition(2).getWidth());
++        assertEquals(600, mManager.findViewByPosition(3).getBottom());
++        assertEquals(180, mManager.findViewByPosition(3).getLeft());
++    }
++
++    @Test
++    public void bottomGridKeepsTextDirectionAndRestoresLocaleColumns() {
++        mActivity.getApplicationInfo().flags |= ApplicationInfo.FLAG_SUPPORTS_RTL;
++        mView.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
++        mManager.setSpanCount(2);
++        mManager.setPresentation(false, true);
++        layout(1, 1000);
++        assertEquals(View.LAYOUT_DIRECTION_LTR, mView.getLayoutDirection());
++        assertEquals(View.LAYOUT_DIRECTION_LTR, mManager.findViewByPosition(0).getLayoutDirection());
++        assertEquals(180, mManager.findViewByPosition(0).getLeft());
++        mView.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
++        layout(3, 1000);
++        assertEquals(180, mManager.findViewByPosition(0).getLeft());
++        assertEquals(1000, mManager.findViewByPosition(0).getBottom());
++        mManager.setPresentation(false, false);
++        layout(3, 1000);
++        assertEquals(180, mManager.findViewByPosition(0).getLeft());
++        assertEquals(0, mManager.findViewByPosition(0).getTop());
++    }
+ }

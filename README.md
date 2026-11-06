@@ -40,6 +40,8 @@ places search at the bottom and its action controls directly above search.
 Choose **Settings → Tabs and tab groups → Tab switcher layout → Cards** for wide,
 overlapping tab previews. **Grid** remains the default. Both layouts keep short
 lists near the bottom when the address bar's Bottom setting is enabled.
+In Bottom mode, Grid fills from the bottom-right, moving left across each row
+and then upward, keeping the first tabs within right-thumb reach.
 
 See [implementation and validation notes](docs/bottom-ui.md) for build checks and
 the Android acceptance checklist.

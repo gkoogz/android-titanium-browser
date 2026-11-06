@@ -6,6 +6,9 @@ This fork extends two existing settings on phones:
   suggestion is nearest the address field and other suggestions extend upward.
   The tab switcher puts its search field at the bottom, with new-tab, pane and
   menu controls above it. Short tab lists align with the bottom controls.
+  In Grid, tabs fill from the bottom-right toward the left, then continue in
+  the row above. An incomplete row stays against the right edge. Long grids
+  scroll upward to reach later tabs. Text keeps the system's language direction.
   On the home page, the utility toolbar sits at the bottom, the search field
   directly above it, and the remaining short page contents above the search field.
 * **Tabs and tab groups → Tab switcher layout:** **Grid** (default) or **Cards**.
@@ -42,6 +45,9 @@ The last preview retains its full bottom edge after closing a tab. Predictive la
 is disabled in Cards mode and bottom-aligned grids. This prevents the predictive
 pass from moving a disappearing card back to the top before its shrink animation;
 the existing shrink, move and switcher animations remain.
+Bottom-mode Grid uses reverse vertical layout and right-to-left span placement,
+without changing the RecyclerView or tab contents' language direction. Top mode
+and the overlapping Cards layout retain their existing ordering.
 
 The home page puts its fake search field after the other page elements and fills
 short pages to the scroll viewport, using bottom gravity. It retains status-bar
@@ -86,6 +92,11 @@ The focused animation, home-page, binder and toolbar suites passed 204 cases on
 Android API 29 and 36. This is a subset of Chromium's tests. The standalone Gradle
 harness does not verify native startup, URL editing, thumbnails or transitions.
 
+The bottom-right Grid change passed 58 production-manager and real close-animation
+cases on API 29 and 36. These cover odd/even tab counts, two/three columns, full-width
+message rows, padding, scrolling in both directions, Top/Cards restoration and
+language direction. Fourteen new-order checks failed before the change.
+
 ## Android acceptance before release
 
 After changes, build the complete APK and repeat the live Android checks. Use the
@@ -101,6 +112,9 @@ configuration.
    and suggestions do not cover it or double-subtract the keyboard height.
 3. Open the tab switcher with 0, 1, 3 and many tabs. Check search, new tab, menu and
    regular/incognito/group pane switching, including typed searches.
+   In Bottom/Grid, verify the first tab is at bottom-right, the second to its
+   left, and the third in the row above on the right. Scroll long lists in both
+   directions and repeat after changing orientation and Top/Bottom placement.
 4. Change Grid/Cards while the switcher is warm. Check opening, selecting, swiping
    closed and undoing tabs, especially the first and last cards. Check thumbnails,
    tab groups, drag-to-group, archive/message cards and transition animations.
