@@ -1,0 +1,214 @@
+diff --git a/chrome/browser/tab_ui/android/java/src/org/chromium/chrome/browser/tab_ui/TabContentManager.java b/chrome/browser/tab_ui/android/java/src/org/chromium/chrome/browser/tab_ui/TabContentManager.java
+index 2b205761e4457d43c2860fe084b20cb45d5f512d..a21cbb136da37cc7033a531ee211b2a6d231d46d 100644
+--- a/chrome/browser/tab_ui/android/java/src/org/chromium/chrome/browser/tab_ui/TabContentManager.java
++++ b/chrome/browser/tab_ui/android/java/src/org/chromium/chrome/browser/tab_ui/TabContentManager.java
+@@ -12,7 +12,6 @@
+ import android.graphics.Bitmap;
+ import android.graphics.BitmapFactory;
+ import android.graphics.Canvas;
+-import android.graphics.Matrix;
+ import android.os.SystemClock;
+ import android.util.Size;
+ import android.view.View;
+@@ -172,13 +171,10 @@
+         if (DeviceFormFactor.isNonMultiDisplayContextOnTablet(mContext)) {
+             // Scale all tablets to MDPI.
+             thumbnailScale = 1.f / deviceDensity;
+-        } else {
+-            // For phones, reduce the amount of memory usage by capturing a lower-res thumbnail for
+-            // devices with resolution higher than HDPI (crbug.com/40358244).
+-            if (deviceDensity > 1.5f) {
+-                thumbnailScale = 1.5f / deviceDensity;
+-            }
+-        }
++        }
++        // Phone cards occupy most of the screen. Preserve physical pixels so their previews
++        // and the page-to-card animation do not magnify an HDPI capture. The native cache and
++        // compression queues remain bounded; JPEG decoding still samples to each card's size.
+         mThumbnailScale = thumbnailScale;
+     }
+ 
+@@ -299,11 +295,9 @@
+             leftMargin = 0.f;
+         }
+ 
+-        int width = (int) ((viewToDraw.getMeasuredWidth() + leftMargin) * mThumbnailScale);
++        int width = (int) ((viewToDraw.getMeasuredWidth() + leftMargin) * scale);
+         int height =
+-                (int)
+-                        ((viewToDraw.getMeasuredHeight() + topMargin - overlayTranslateY)
+-                                * mThumbnailScale);
++                (int) ((viewToDraw.getMeasuredHeight() + topMargin - overlayTranslateY) * scale);
+         if (width <= 0 || height <= 0) {
+             return null;
+         }
+@@ -613,12 +607,6 @@
+                 return;
+             }
+ 
+-            // If we use readbackNativeBitmap() with a downsampled scale and not saving it through
+-            // TabContentManagerJni.get().cacheTabWithBitmap(), the logic
+-            // of InvalidationAwareThumbnailProvider might prevent captureThumbnail() from getting
+-            // the latest thumbnail. Therefore, we have to also call cacheNativeTabThumbnail(), and
+-            // do the downsampling here ourselves. This is less efficient than capturing a
+-            // downsampled bitmap, but the performance here is not the bottleneck.
+             Bitmap bitmap = cacheNativeTabThumbnail(tab);
+             if (callback == null) return;
+             if (bitmap == null || !returnBitmap) {
+@@ -626,16 +614,10 @@
+                 return;
+             }
+ 
+-            final float downsamplingScale = 0.5f;
+-            Matrix matrix = new Matrix();
+-            matrix.setScale(downsamplingScale, downsamplingScale);
+-            Bitmap resized =
+-                    Bitmap.createBitmap(
+-                            bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+             long durationMs = SystemClock.elapsedRealtime() - startTime;
+             RecordHistogram.recordTimesHistogram(
+                     String.format(UMA_THUMBNAIL_CAPTURE_DURATION_FORMAT, "NativePage"), durationMs);
+-            callback.onResult(resized);
++            callback.onResult(bitmap);
+         } else {
+             if (tab.getWebContents() == null) {
+                 Callback.runNullSafe(callback, null);
+diff --git a/chrome/browser/tab_ui/android/junit/src/org/chromium/chrome/browser/tab_ui/TabContentManagerUnitTest.java b/chrome/browser/tab_ui/android/junit/src/org/chromium/chrome/browser/tab_ui/TabContentManagerUnitTest.java
+index 077c5d80f16aa14b613a62d3e82974d66991eb0b..740a8bd0649e0ce5a0b48dd3d5bdd3c01c85ba3f 100644
+--- a/chrome/browser/tab_ui/android/junit/src/org/chromium/chrome/browser/tab_ui/TabContentManagerUnitTest.java
++++ b/chrome/browser/tab_ui/android/junit/src/org/chromium/chrome/browser/tab_ui/TabContentManagerUnitTest.java
+@@ -36,9 +36,11 @@
+ import org.chromium.base.test.util.Features.EnableFeatures;
+ import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
+ import org.chromium.chrome.browser.flags.ChromeFeatureList;
++import org.chromium.chrome.browser.tab.Tab;
+ import org.chromium.chrome.browser.tab_ui.TabContentManager.TabFinder;
+ import org.chromium.chrome.browser.tabwindow.TabWindowManager;
+ import org.chromium.chrome.browser.ui.vertical_tabs.VerticalTabUtils;
++import org.chromium.content_public.browser.WebContents;
+ 
+ import java.util.List;
+ 
+@@ -110,6 +112,29 @@
+     }
+ 
+     @Test
++    @Config(qualifiers = "sw400dp-xxxhdpi")
++    public void testHighDensityPhoneCapturesPhysicalPixels() {
++        mTabContentManager.initWithNative();
++        Tab tab = org.mockito.Mockito.mock(Tab.class);
++        when(tab.getWebContents()).thenReturn(org.mockito.Mockito.mock(WebContents.class));
++
++        mTabContentManager.cacheTabThumbnail(tab);
++
++        verify(mTabContentManagerJni)
++                .captureThumbnail(eq(NATIVE_PTR), eq(tab), eq(1.0f), eq(false), any());
++    }
++
++    @Test
++    @Config(qualifiers = "sw400dp-xxxhdpi")
++    public void testNativeReadbackUsesRequestedScaleForBoundsAndDrawing() {
++        Bitmap bitmap = mTabContentManager.readbackNativeView(mViewToDraw, 0.75f, null);
++
++        assertNotNull(bitmap);
++        assertEquals(225, bitmap.getWidth());
++        assertEquals(150, bitmap.getHeight());
++    }
++
++    @Test
+     public void testUpdateVisibleIds_withNative() {
+         mTabContentManager.initWithNative();
+ 
+diff --git a/chrome/browser/thumbnail/cc/jpeg_thumbnail_helper.cc b/chrome/browser/thumbnail/cc/jpeg_thumbnail_helper.cc
+index 6260aa523b64572e91273bb35187870a3a84d082..aa3c084b79c11fb448548ff1a951b580c553e67d 100644
+--- a/chrome/browser/thumbnail/cc/jpeg_thumbnail_helper.cc
++++ b/chrome/browser/thumbnail/cc/jpeg_thumbnail_helper.cc
+@@ -16,8 +16,8 @@
+ #include "base/task/bind_post_task.h"
+ #include "base/task/sequenced_task_runner.h"
+ #include "base/task/thread_pool.h"
+-#include "skia/ext/image_operations.h"
+ #include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
++#include "third_party/skia/include/core/SkBitmap.h"
+ #include "ui/gfx/codec/jpeg_codec.h"
+ 
+ namespace thumbnail {
+@@ -25,25 +25,14 @@
+ 
+ constexpr char kJpegExtension[] = ".jpeg";
+ 
+-SkBitmap ResizeBitmap(const SkBitmap& bitmap) {
+-  constexpr int kScale = 2;
+-  int width = bitmap.width() / kScale;
+-  int height = bitmap.height() / kScale;
+-
+-  SkIRect dest_subset = {0, 0, width, height};
+-
+-  SkBitmap output = skia::ImageOperations::Resize(
+-      bitmap, skia::ImageOperations::RESIZE_BETTER, width, height, dest_subset);
+-  output.setImmutable();
+-  return output;
+-}
+-
+ void CompressTask(
+     const SkBitmap& bitmap,
+     base::OnceCallback<void(std::vector<uint8_t>)> post_processing_task) {
++  // Preserve captured pixels: wide tab cards would otherwise upscale a
++  // half-size JPEG. This work stays on the background compression queue.
+   constexpr int kCompressionQuality = 97;
+   std::optional<std::vector<uint8_t>> data =
+-      gfx::JPEGCodec::Encode(ResizeBitmap(bitmap), kCompressionQuality);
++      gfx::JPEGCodec::Encode(bitmap, kCompressionQuality);
+ 
+   std::move(post_processing_task)
+       .Run(data.has_value() ? std::move(*data) : std::vector<uint8_t>());
+diff --git a/chrome/browser/thumbnail/cc/jpeg_thumbnail_helper_unittest.cc b/chrome/browser/thumbnail/cc/jpeg_thumbnail_helper_unittest.cc
+index 6abdfe77dd76b4469abee6ccd9ed5e5aeeb5ea82..ab10fe7544670f7a4a00acea944777b02380194e 100644
+--- a/chrome/browser/thumbnail/cc/jpeg_thumbnail_helper_unittest.cc
++++ b/chrome/browser/thumbnail/cc/jpeg_thumbnail_helper_unittest.cc
+@@ -88,13 +88,43 @@
+         EXPECT_FALSE(jpeg_data.empty());
+         SkBitmap bitmap = gfx::JPEGCodec::Decode(jpeg_data);
+         EXPECT_FALSE(bitmap.isNull());
+-        EXPECT_GT(bitmap.width(), 0);
+-        EXPECT_GT(bitmap.height(), 0);
++        EXPECT_EQ(bitmap.width(), kDimension * kKiB);
++        EXPECT_EQ(bitmap.height(), kDimension);
+       }).Then(loop1.QuitClosure());
+ 
+   GetInterface().Compress(image, std::move(once));
+   task_environment_.RunUntilIdle();
+   loop1.Run();
++}
++
++TEST_F(JpegThumbnailHelperTest, PreserveFineDetail) {
++  // Alternating two-pixel bars disappear when the preview is halved before encoding.
++  SkBitmap image;
++  ASSERT_TRUE(image.tryAllocN32Pixels(120, 80));
++  for (int y = 0; y < image.height(); ++y) {
++    for (int x = 0; x < image.width(); ++x) {
++      *image.getAddr32(x, y) = (x / 2) % 2 ? SK_ColorWHITE : SK_ColorBLACK;
++    }
++  }
++  image.setImmutable();
++  base::RunLoop loop;
++  GetInterface().Compress(
++      image, base::BindOnce([](std::vector<uint8_t> data) {
++               ASSERT_FALSE(data.empty());
++               SkBitmap decoded = gfx::JPEGCodec::Decode(data);
++               ASSERT_EQ(decoded.width(), 120);
++               ASSERT_EQ(decoded.height(), 80);
++               for (int x = 8; x < 112; ++x) {
++                 int luminance = SkColorGetR(decoded.getColor(x, 40));
++                 if ((x / 2) % 2) {
++                   EXPECT_GT(luminance, 230);
++                 } else {
++                   EXPECT_LT(luminance, 25);
++                 }
++               }
++             }).Then(loop.QuitClosure()));
++  task_environment_.RunUntilIdle();
++  loop.Run();
+ }
+ 
+ TEST_F(JpegThumbnailHelperTest, CompressEmptyThumbnail) {

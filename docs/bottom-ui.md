@@ -138,6 +138,25 @@ tall-card crops, continuous bitmap scaling and final-frame transform retention.
 The additional checks cover window-origin normalization and restoring the fan
 after binding/item-animation callbacks alter presentation properties.
 
+## Preview resolution
+
+Phone previews capture at physical screen resolution in all three modes. The JPEG
+cache preserves the captured dimensions at the existing quality setting instead
+of halving each axis again. JPEG reads still sample down to the requested card
+size, and the existing two-entry native cache and bounded compression/write queues
+remain unchanged. Native-page animation callbacks reuse the captured bitmap rather
+than allocating another half-size image. Tablet capture density retains upstream
+behavior.
+
+On the Moto's 1220-pixel-wide display, the previous capture and JPEG reductions
+produced 353-pixel-wide previews, which the wide cards magnified. Previously saved
+previews retain their old detail until the corresponding page is visited and
+captured again; missing detail cannot be recovered by enlarging those files.
+
+Sixteen TabContentManager cases passed on API 29/36, including high-density phone
+capture and consistent native readback bounds. The native JPEG tests also check
+encoded dimensions and retention of alternating two-pixel lines.
+
 ## Android acceptance before release
 
 After changes, build the complete APK and repeat the live Android checks. Use the
