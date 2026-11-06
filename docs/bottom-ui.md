@@ -11,11 +11,24 @@ This fork extends two existing settings on phones:
   scroll upward to reach later tabs. Text keeps the system's language direction.
   On the home page, the utility toolbar sits at the bottom, the search field
   directly above it, and the remaining short page contents above the search field.
-* **Tabs and tab groups → Tab switcher layout:** **Grid** (default) or **Cards**.
-  Cards use one wide column of overlapping previews. Tab identity, thumbnails,
+* **Tabs and tab groups → Tab switcher layout:** **Grid** (default),
+  **Vertical cards**, or **Horizontal cards**. Vertical cards use a column of
+  overlapping previews with 10% margins on either side. Cards fade smoothly
+  through the bottom edge instead of disappearing while their titles are visible.
+  Horizontal cards form a fanned deck, with the primary preview about 75% of the
+  screen width and 70% of its height. The primary card sits above the bottom
+  action controls, or vertically centered when Top controls are selected.
+  Swiping browses the deck; the departing card keeps its size and fades near
+  the edge, while the next card slides in and grows slightly in height.
+  Use the close button to close a tab in Horizontal cards.
+  Tab identity, thumbnails,
   close actions, groups and transition animations use the existing tab model and
   views. The preference is independent of address-bar placement and changes the
   phone switcher without restarting the browser.
+* **Tab switcher handedness:** Right handed (default) or Left handed mirrors
+  Grid columns and the Horizontal cards deck, including its swipe direction.
+  The preference is disabled in Vertical cards, which is symmetric.
+  Existing Cards users retain Vertical cards without resetting the preference.
 
 The group dialog, selection editor, tablets, automotive and XR keep their existing
 layouts. The home page follows the address-bar preference, including while editing.
@@ -39,15 +52,21 @@ height. Hub search supplies its bottom placement through the location-bar embedd
 The Hub toolbar observes the existing placement preference and reserves its measured
 height, including navigation insets, in the pane host.
 
-Cards retain GridLayoutManager's tab integration and use one span with negative top
-decoration insets between adjacent tab cards. Message cards retain their full height.
+All modes retain GridLayoutManager's tab integration. Vertical cards use one span
+with negative top decoration insets between adjacent previews and 10% side insets.
+Message cards retain their full height.
 The last preview retains its full bottom edge after closing a tab. Predictive layout
 is disabled in Cards mode and bottom-aligned grids. This prevents the predictive
 pass from moving a disappearing card back to the top before its shrink animation;
 the existing shrink, move and switcher animations remain.
 Bottom-mode Grid uses reverse vertical layout and right-to-left span placement,
 without changing the RecyclerView or tab contents' language direction. Top mode
-and the overlapping Cards layout retain their existing ordering.
+and the overlapping Vertical cards layout retain their existing vertical ordering.
+Horizontal cards use one horizontal span, edge snapping and transformed previews
+with a small height reduction behind the primary card. Extra layout space keeps
+overlapping previews attached until they finish fading. Switching modes clears
+the preview transforms. Horizontal deck gestures bypass swipe-to-close so browsing
+cannot accidentally dismiss a tab; close buttons retain the existing close action.
 
 The home page puts its fake search field after the other page elements and fills
 short pages to the scroll viewport, using bottom gravity. It retains status-bar
@@ -97,6 +116,12 @@ cases on API 29 and 36. These cover odd/even tab counts, two/three columns, full
 message rows, padding, scrolling in both directions, Top/Cards restoration and
 language direction. Fourteen new-order checks failed before the change.
 
+The Vertical/Horizontal cards and handedness update passed 88 production layout,
+real close-animation and gesture-routing checks on API 29/36. These include side
+margins, retained fading cards, horizontal size/depth/alpha, outgoing size stability,
+both hands, selected-tab positioning, window centering, resizing, empty/single/long
+decks and mode restoration. Horizontal swipes are checked to bypass tab dismissal.
+
 ## Android acceptance before release
 
 After changes, build the complete APK and repeat the live Android checks. Use the
@@ -115,11 +140,15 @@ configuration.
    In Bottom/Grid, verify the first tab is at bottom-right, the second to its
    left, and the third in the row above on the right. Scroll long lists in both
    directions and repeat after changing orientation and Top/Bottom placement.
-4. Change Grid/Cards while the switcher is warm. Check opening, selecting, swiping
+4. Change Grid/Vertical cards/Horizontal cards while the switcher is warm.
+   Check opening, selecting, swiping
    closed and undoing tabs, especially the first and last cards. Check thumbnails,
    tab groups, drag-to-group, archive/message cards and transition animations.
    The disappearing preview must shrink at the position of the actual closed tab,
    including the second grid column and when a removal changes the number of rows.
+   For Horizontal cards, check the active preview, fan depth, height growth,
+   outgoing fade, edge snap, both swipe directions and the close button. Change
+   handedness and confirm the deck and Grid mirror without mirroring tab text.
 5. Restore Address bar → Top and Grid. Check TalkBack, keyboard navigation and large
    text. Compare tablet, automotive and XR behavior with the upstream build.
 

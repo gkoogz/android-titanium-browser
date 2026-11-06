@@ -18,6 +18,8 @@ manager = manager.replace("import org.chromium.build.annotations.NullMarked;\n",
 tests = (component / "junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java").read_text()
 # Chromium registers the same tests with its own runner in chrome/android/junit/BUILD.gn.
 tests = tests.replace("org.chromium.base.test.BaseRobolectricTestRunner", "org.robolectric.RobolectricTestRunner").replace("BaseRobolectricTestRunner.class", "RobolectricTestRunner.class")
+# This harness caches API 28/35; the Chromium runner exercises API 29/36.
+tests = tests.replace("sdk = {29, 36}", "sdk = {28, 35}")
 (test / "TabCardLayoutManagerUnitTest.java").write_text(tests)
 (project / "src/main/AndroidManifest.xml").write_text('<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>')
 

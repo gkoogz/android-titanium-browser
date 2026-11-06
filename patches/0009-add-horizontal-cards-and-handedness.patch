@@ -1,0 +1,1088 @@
+diff --git a/chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml b/chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml
+index 9a7aea9a946070f991f7fb441ee02c5f95382147..55bbbd7c53e3b02da09f79b1800d71fde7d6a0e9 100644
+--- a/chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml
++++ b/chrome/android/features/tab_ui/java/res/xml/tabs_settings.xml
+@@ -12,6 +12,12 @@
+     <androidx.preference.ListPreference
+         android:key="tab_switcher_layout"
+         android:title="@string/titanium_tab_layout_title"
++        android:persistent="false"
++        app:allowDividerBelow="true" />
++
++    <androidx.preference.ListPreference
++        android:key="tab_switcher_handedness"
++        android:title="@string/titanium_tab_handedness_title"
+         android:persistent="false"
+         app:allowDividerBelow="true" />
+ 
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+index b5e505eb8eb14a826a9ca2116138be1a58e63787..0f009fb6ec5855820b46912a74635767305a5efd 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+@@ -18,10 +18,21 @@
+ /** Retains tab-grid behavior while optionally displaying wide, overlapping preview cards. */
+ @NullMarked
+ class TabCardLayoutManager extends GridLayoutManager {
++    static final int GRID = 0;
++    static final int VERTICAL_CARDS = 1;
++    static final int HORIZONTAL_CARDS = 2;
+     private final int mMinimumStride;
+     private boolean mStacked;
++    private boolean mHorizontal;
++    private boolean mRightHanded = true;
++    private boolean mUseHandedness;
++    private boolean mResetTransforms;
+     private boolean mBottomAnchored;
+     private int mCardHeight;
++    private int mHorizontalCardWidth;
++    private int mHorizontalCenterY = -1;
++    private int mPendingHorizontalPosition = RecyclerView.NO_POSITION;
++    private int mPrimaryHorizontalPosition = RecyclerView.NO_POSITION;
+ 
+     TabCardLayoutManager(Context context, int spanCount) {
+         super(context, spanCount);
+@@ -29,21 +40,82 @@
+     }
+ 
+     boolean setPresentation(boolean stacked, boolean bottomAnchored) {
+-        if (mStacked == stacked && mBottomAnchored == bottomAnchored) return false;
++        return setPresentation(
++                stacked ? VERTICAL_CARDS : GRID, bottomAnchored, true, bottomAnchored);
++    }
++
++    boolean setPresentation(int mode, boolean bottomAnchored, boolean rightHanded) {
++        return setPresentation(mode, bottomAnchored, rightHanded, true);
++    }
++
++    private boolean setPresentation(
++            int mode, boolean bottomAnchored, boolean rightHanded, boolean useHandedness) {
++        boolean stacked = mode == VERTICAL_CARDS;
++        boolean horizontal = mode == HORIZONTAL_CARDS;
++        if (mStacked == stacked
++                && mHorizontal == horizontal
++                && mBottomAnchored == bottomAnchored
++                && mRightHanded == rightHanded
++                && mUseHandedness == useHandedness) return false;
++        if (mHorizontal != horizontal) mPrimaryHorizontalPosition = RecyclerView.NO_POSITION;
+         mStacked = stacked;
++        mHorizontal = horizontal;
+         mBottomAnchored = bottomAnchored;
+-        // Keep the first row by the bottom controls, with later rows growing upward.
+-        // Cards keep their existing overlap direction and drawing order.
+-        setReverseLayout(bottomAnchored && !stacked);
++        mRightHanded = rightHanded;
++        mUseHandedness = useHandedness;
++        mResetTransforms = true;
++        setOrientation(horizontal ? HORIZONTAL : VERTICAL);
++        // Older tabs fan behind the selected tab, matching the vertical stack's order.
++        setReverseLayout(horizontal ? !rightHanded : bottomAnchored && !stacked);
+         requestLayout();
+         return true;
++    }
++
++    boolean isHorizontalCards() {
++        return mHorizontal;
++    }
++
++    boolean isRightHanded() {
++        return mRightHanded;
++    }
++
++    void setHorizontalGeometry(int cardWidth, int centerY) {
++        if (mHorizontalCardWidth == cardWidth && mHorizontalCenterY == centerY) return;
++        mHorizontalCardWidth = cardWidth;
++        mHorizontalCenterY = centerY;
++        if (mHorizontal) {
++            // Preserve the card being browsed across rotation and viewport resizing.
++            if (mPrimaryHorizontalPosition != RecyclerView.NO_POSITION) {
++                mPendingHorizontalPosition = mPrimaryHorizontalPosition;
++            }
++            requestLayout();
++        }
++    }
++
++    private int horizontalSideInset() {
++        int available = getWidth() - super.getPaddingLeft() - super.getPaddingRight();
++        int width = mHorizontalCardWidth > 0 ? mHorizontalCardWidth : Math.round(available * 0.75f);
++        return Math.max(0, available - width);
++    }
++
++    @Override
++    public int getPaddingLeft() {
++        // Reserve the empty quarter beside the final card so even a one-tab deck
++        // stays on its chosen edge. clipToPadding=false still exposes the fan here.
++        return super.getPaddingLeft() + (mHorizontal && mRightHanded ? horizontalSideInset() : 0);
++    }
++
++    @Override
++    public int getPaddingRight() {
++        return super.getPaddingRight() + (mHorizontal && !mRightHanded ? horizontalSideInset() : 0);
+     }
+ 
+     @Override
+     protected boolean isLayoutRTL() {
+         // Reverse column placement only. Changing the view's language direction would
+         // also mirror tab titles, close buttons and other contents.
+-        return (mBottomAnchored && !mStacked) || super.isLayoutRTL();
++        if (mHorizontal) return false;
++        return !mStacked && mUseHandedness ? mRightHanded : super.isLayoutRTL();
+     }
+ 
+     boolean setCardHeight(int height) {
+@@ -59,9 +131,25 @@
+                     Rect outRect, View view, RecyclerView parent, RecyclerView.State state) {
+                 outRect.setEmpty();
+                 int position = parent.getChildAdapterPosition(view);
+-                if (!mStacked || position <= 0
+-                        || state.isPreLayout() || position >= state.getItemCount()
+-                        || !isTabCard.test(position) || !isTabCard.test(position - 1)) {
++                if (mStacked
++                        && position >= 0
++                        && position < state.getItemCount()
++                        && isTabCard.test(position)) {
++                    int inset =
++                            Math.round(
++                                    (parent.getWidth()
++                                                    - parent.getPaddingLeft()
++                                                    - parent.getPaddingRight())
++                                            * 0.10f);
++                    outRect.left = inset;
++                    outRect.right = inset;
++                }
++                if (!mStacked
++                        || position <= 0
++                        || state.isPreLayout()
++                        || position >= state.getItemCount()
++                        || !isTabCard.test(position)
++                        || !isTabCard.test(position - 1)) {
+                     return;
+                 }
+                 // Keep the title, close button and a useful portion of the preview exposed.
+@@ -78,24 +166,163 @@
+     public boolean supportsPredictiveItemAnimations() {
+         // GridLayoutManager's predictive pass puts disappearing views back at the top.
+         // Keep their actual bounds for the normal shrink/move animations instead.
+-        return !mStacked && !mBottomAnchored && super.supportsPredictiveItemAnimations();
++        return !mStacked
++                && !mHorizontal
++                && !mBottomAnchored
++                && super.supportsPredictiveItemAnimations();
++    }
++
++    @Override
++    protected void calculateExtraLayoutSpace(RecyclerView.State state, int[] extraLayoutSpace) {
++        super.calculateExtraLayoutSpace(state, extraLayoutSpace);
++        // Overlapping previews can still be visible after their normal layout slot leaves
++        // the viewport. Retain them through the fade instead of recycling them abruptly.
++        int extra = mHorizontal ? getWidth() * 4 : mStacked ? mCardHeight : 0;
++        extraLayoutSpace[0] = Math.max(extraLayoutSpace[0], extra);
++        extraLayoutSpace[1] = Math.max(extraLayoutSpace[1], extra);
+     }
+ 
+     @Override
+     public void onLayoutChildren(RecyclerView.Recycler recycler, RecyclerView.State state) {
++        if (mResetTransforms) {
++            for (int i = 0; i < getChildCount(); i++) {
++                View child = getChildAt(i);
++                if (child != null) resetTransforms(child);
++            }
++            mResetTransforms = false;
++        }
++        if (mHorizontal && mPendingHorizontalPosition != RecyclerView.NO_POSITION) {
++            int available = getWidth() - getPaddingLeft() - getPaddingRight();
++            int width =
++                    mHorizontalCardWidth > 0 ? mHorizontalCardWidth : Math.round(available * 0.75f);
++            super.scrollToPositionWithOffset(
++                    mPendingHorizontalPosition, Math.max(0, available - width));
++            mPendingHorizontalPosition = RecyclerView.NO_POSITION;
++        }
+         super.onLayoutChildren(recycler, state);
+-        if (!state.isPreLayout()) alignShortListToBottom(state);
++        if (!state.isPreLayout()) {
++            if (mHorizontal) alignHorizontalCards();
++            else alignShortListToBottom(state);
++            updateCardTransforms();
++        }
+     }
+ 
+     @Override
+     public int scrollVerticallyBy(
+             int dy, RecyclerView.Recycler recycler, RecyclerView.State state) {
+         int consumed = super.scrollVerticallyBy(dy, recycler, state);
+-        return alignShortListToBottom(state) ? 0 : consumed;
++        boolean shortList = alignShortListToBottom(state);
++        updateCardTransforms();
++        return shortList ? 0 : consumed;
++    }
++
++    @Override
++    public int scrollHorizontallyBy(
++            int dx, RecyclerView.Recycler recycler, RecyclerView.State state) {
++        int consumed = super.scrollHorizontallyBy(dx, recycler, state);
++        if (mHorizontal) {
++            alignHorizontalCards();
++            updateCardTransforms();
++        }
++        return consumed;
++    }
++
++    @Override
++    public void scrollToPositionWithOffset(int position, int offset) {
++        // Hub supplies a vertical centering offset. Horizontal cards snap to their edge.
++        if (mHorizontal) {
++            mPendingHorizontalPosition = position;
++            requestLayout();
++        } else {
++            super.scrollToPositionWithOffset(position, offset);
++        }
++    }
++
++    @Override
++    public void scrollToPosition(int position) {
++        if (mHorizontal) scrollToPositionWithOffset(position, 0);
++        else super.scrollToPosition(position);
++    }
++
++    private static void resetTransforms(View child) {
++        child.setTranslationX(0);
++        child.setTranslationY(0);
++        child.setTranslationZ(0);
++        child.setScaleX(1);
++        child.setScaleY(1);
++        child.setAlpha(1);
++    }
++
++    private void alignHorizontalCards() {
++        int available = getHeight() - getPaddingTop() - getPaddingBottom();
++        for (int i = 0; i < getChildCount(); i++) {
++            View child = getChildAt(i);
++            if (child == null) continue;
++            int targetTop =
++                    mBottomAnchored
++                            ? getHeight() - getPaddingBottom() - getDecoratedMeasuredHeight(child)
++                            : (mHorizontalCenterY >= 0
++                                            ? mHorizontalCenterY
++                                            : getPaddingTop() + available / 2)
++                                    - getDecoratedMeasuredHeight(child) / 2;
++            targetTop =
++                    Math.max(
++                            getPaddingTop(),
++                            Math.min(
++                                    targetTop,
++                                    getHeight()
++                                            - getPaddingBottom()
++                                            - getDecoratedMeasuredHeight(child)));
++            child.offsetTopAndBottom(targetTop - getDecoratedTop(child));
++            child.setPivotY(mBottomAnchored ? child.getHeight() : child.getHeight() / 2f);
++        }
++    }
++
++    private static float smoothUnit(float value) {
++        float t = Math.max(0, Math.min(1, value));
++        return t * t * (3 - 2 * t);
++    }
++
++    private void updateCardTransforms() {
++        if (!mStacked && !mHorizontal) return;
++        float nearestDepth = Float.MAX_VALUE;
++        for (int i = 0; i < getChildCount(); i++) {
++            View child = getChildAt(i);
++            if (child == null) continue;
++            if (mHorizontal) {
++                float width = Math.max(1, getDecoratedMeasuredWidth(child));
++                float depth =
++                        mRightHanded
++                                ? (getWidth() - getPaddingRight() - getDecoratedRight(child))
++                                        / width
++                                : (getDecoratedLeft(child) - getPaddingLeft()) / width;
++                float behind = Math.max(0, depth);
++                if (Math.abs(depth) < nearestDepth) {
++                    nearestDepth = Math.abs(depth);
++                    mPrimaryHorizontalPosition = getPosition(child);
++                }
++                float peek = Math.min(width * 0.14f, getWidth() * 0.09f);
++                child.setTranslationX((mRightHanded ? 1 : -1) * (width - peek) * behind);
++                // The departing card stays at its primary size. Only incoming cards grow.
++                child.setScaleY(1 - Math.min(behind, 4) * 0.025f);
++                child.setTranslationZ(
++                        (5 - Math.min(behind, 4))
++                                * child.getResources().getDisplayMetrics().density);
++                child.setAlpha(depth < 0 ? smoothUnit((1 + depth) / 0.30f) : smoothUnit(4 - depth));
++            } else {
++                float available = Math.max(1, getHeight() - getPaddingTop() - getPaddingBottom());
++                child.setAlpha(
++                        smoothUnit(
++                                (getHeight() - getPaddingBottom() - child.getTop())
++                                        / (available * 0.35f)));
++            }
++        }
+     }
+ 
+     private boolean alignShortListToBottom(RecyclerView.State state) {
+-        if (!mBottomAnchored || getChildCount() == 0
++        if (mHorizontal
++                || !mBottomAnchored
++                || getChildCount() == 0
+                 || findFirstVisibleItemPosition() != 0
+                 || findLastVisibleItemPosition() != state.getItemCount() - 1) {
+             return false;
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
+index e947b0eee77d4b137dcb999f339d6f30b2e990a0..f279bb506862fa25691a74abb74f9429ee08f3f1 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
+@@ -188,6 +188,11 @@
+ 
+     @Override
+     public int getMovementFlags(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder) {
++        if (recyclerView.getLayoutManager() instanceof TabCardLayoutManager manager
++                && manager.isHorizontalCards()) {
++            // Horizontal swipes browse the deck. Closing remains an explicit card action.
++            return makeMovementFlags(0, 0);
++        }
+         final int dragFlags = isMessageType(viewHolder) ? 0 : mDragFlags;
+         final int swipeFlags =
+                 isSwipeable(viewHolder) ? ItemTouchHelper.START | ItemTouchHelper.END : 0;
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
+index 05d2e6893ca00bf33dcf494ac9a55aa336e423a4..759139e74b697787ab8b507d7067251a96b36ddb 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
+@@ -26,6 +26,7 @@
+ import androidx.annotation.StringRes;
+ import androidx.recyclerview.widget.GridLayoutManager;
+ import androidx.recyclerview.widget.LinearLayoutManager;
++import androidx.recyclerview.widget.LinearSnapHelper;
+ import androidx.recyclerview.widget.RecyclerView;
+ import androidx.recyclerview.widget.RecyclerView.ItemAnimator.ItemAnimatorFinishedListener;
+ import androidx.recyclerview.widget.RecyclerView.OnItemTouchListener;
+@@ -45,11 +46,9 @@
+ import org.chromium.chrome.browser.flags.ChromeFeatureList;
+ import org.chromium.chrome.browser.lifecycle.DestroyObserver;
+ import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
+-import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+ import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
+-import org.chromium.chrome.browser.toolbar.ToolbarPositionController;
+-import org.chromium.chrome.browser.toolbar.settings.AddressBarPreference;
++import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.chrome.browser.tab.Tab;
+ import org.chromium.chrome.browser.tab.TabFavicon;
+ import org.chromium.chrome.browser.tab.TabId;
+@@ -71,6 +70,8 @@
+ import org.chromium.chrome.browser.tasks.tab_management.TabProperties.UiType;
+ import org.chromium.chrome.browser.tasks.tab_management.TabSwitcherMessageManager.MessageType;
+ import org.chromium.chrome.browser.tasks.tab_management.labels.TabListHighlighter;
++import org.chromium.chrome.browser.toolbar.ToolbarPositionController;
++import org.chromium.chrome.browser.toolbar.settings.AddressBarPreference;
+ import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
+ import org.chromium.chrome.browser.undo_tab_close_snackbar.UndoBarExplicitTrigger;
+ import org.chromium.chrome.tab_ui.R;
+@@ -129,6 +130,7 @@
+     private final TabListRecyclerView mRecyclerView;
+     private SharedPreferences.@Nullable OnSharedPreferenceChangeListener mLayoutPreferenceObserver;
+     private boolean mIsPhoneTabSwitcher;
++    private @Nullable LinearSnapHelper mCardSnapHelper;
+     private boolean mDestroyed;
+     private final SimpleRecyclerViewAdapter mAdapter;
+     private final @TabListMode int mMode;
+@@ -410,14 +412,18 @@
+                                 && TabProperties.isTabOrTabGroup(mModelList.get(position).model)));
+                 mMediator.registerOrientationListener(gridLayoutManager);
+                 if (mIsPhoneTabSwitcher) {
+-                    mLayoutPreferenceObserver = (preferences, key) -> {
+-                        if (ChromePreferenceKeys.TAB_SWITCHER_LAYOUT.equals(key)
+-                                || ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED.equals(key)) {
+-                            mRecyclerView.post(() -> {
+-                                if (!mDestroyed) updateGridCardLayout(mRecyclerView.getWidth());
+-                            });
+-                        }
+-                    };
++                    mLayoutPreferenceObserver =
++                            (preferences, key) -> {
++                                if (ChromePreferenceKeys.TAB_SWITCHER_LAYOUT.equals(key)
++                                        || ChromePreferenceKeys.TAB_SWITCHER_LEFT_HANDED.equals(key)
++                                        || ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED.equals(key)) {
++                                    mRecyclerView.post(
++                                            () -> {
++                                                if (!mDestroyed)
++                                                    updateGridCardLayout(mRecyclerView.getWidth());
++                                            });
++                                }
++                            };
+                     ContextUtils.getAppSharedPreferences().registerOnSharedPreferenceChangeListener(
+                             mLayoutPreferenceObserver);
+                 }
+@@ -688,13 +694,24 @@
+         final TabCardLayoutManager layoutManager =
+                 (TabCardLayoutManager) mRecyclerView.getLayoutManager();
+         assumeNonNull(layoutManager);
+-        boolean stacked = mIsPhoneTabSwitcher && ChromeSharedPreferences.getInstance().readInt(
+-                ChromePreferenceKeys.TAB_SWITCHER_LAYOUT, 0) == 1;
++        int mode =
++                mIsPhoneTabSwitcher
++                        ? ChromeSharedPreferences.getInstance()
++                                .readInt(ChromePreferenceKeys.TAB_SWITCHER_LAYOUT, 0)
++                        : TabCardLayoutManager.GRID;
++        boolean stacked = mode == TabCardLayoutManager.VERTICAL_CARDS;
++        boolean horizontal = mode == TabCardLayoutManager.HORIZONTAL_CARDS;
+         boolean bottom = mIsPhoneTabSwitcher && !AddressBarPreference.isToolbarConfiguredToShowOnTop();
+-        mMediator.setUseStackedCards(stacked);
+-        if (layoutManager.setPresentation(stacked, bottom)) {
+-            mRecyclerView.invalidateItemDecorations();
+-        }
++        boolean rightHanded =
++                !ChromeSharedPreferences.getInstance()
++                        .readBoolean(ChromePreferenceKeys.TAB_SWITCHER_LEFT_HANDED, false);
++        mMediator.setUseStackedCards(stacked || horizontal);
++        boolean presentationChanged =
++                mIsPhoneTabSwitcher
++                        ? layoutManager.setPresentation(mode, bottom, rightHanded)
++                        : layoutManager.setPresentation(false, false);
++        if (presentationChanged) mRecyclerView.invalidateItemDecorations();
++        updateCardSnapHelper(horizontal, layoutManager);
+         boolean updatedSpan =
+                 mMediator.updateSpanCount(
+                         layoutManager, mActivity.getResources().getConfiguration().screenWidthDp);
+@@ -703,15 +720,57 @@
+             ViewUtils.requestLayout(mRecyclerView, "TabListCoordinator#updateGridCardLayout");
+         }
+         // Determine grid card width and account for margins on left and right.
++        int availableWidth =
++                Math.max(
++                        1,
++                        viewWidth
++                                - mRecyclerView.getPaddingStart()
++                                - mRecyclerView.getPaddingEnd());
+         final int cardWidthPx =
+-                ((viewWidth - mRecyclerView.getPaddingStart() - mRecyclerView.getPaddingEnd())
+-                        / layoutManager.getSpanCount());
++                Math.max(
++                        1,
++                        horizontal
++                                ? Math.round(availableWidth * 0.75f)
++                                : stacked
++                                        ? availableWidth - 2 * Math.round(availableWidth * 0.10f)
++                                        : availableWidth / layoutManager.getSpanCount());
+         int cardHeightPx = TabUtils.deriveGridCardHeight(
+                 cardWidthPx, mActivity, mBrowserControlsStateProvider);
+         if (stacked && mRecyclerView.getHeight() > 0) {
+             cardHeightPx = Math.min(cardHeightPx, Math.max(
+                     (int) (160 * mActivity.getResources().getDisplayMetrics().density),
+                     (int) (mRecyclerView.getHeight() * 0.72f)));
++        }
++        if (horizontal && mRecyclerView.getHeight() > 0) {
++            int screenHeight = mActivity.getWindow().getDecorView().getHeight();
++            if (screenHeight <= 0) screenHeight = mRecyclerView.getHeight();
++            cardHeightPx =
++                    Math.max(
++                            1,
++                            Math.min(
++                                    Math.round(screenHeight * 0.70f),
++                                    mRecyclerView.getHeight()
++                                            - mRecyclerView.getPaddingTop()
++                                            - mRecyclerView.getPaddingBottom()));
++        }
++        if (horizontal) {
++            int[] location = new int[2];
++            mRecyclerView.getLocationInWindow(location);
++            View decor = mActivity.getWindow().getDecorView();
++            int[] decorLocation = new int[2];
++            decor.getLocationInWindow(decorLocation);
++            layoutManager.setHorizontalGeometry(
++                    cardWidthPx, decorLocation[1] + decor.getHeight() / 2 - location[1]);
++        }
++        if (presentationChanged && horizontal) {
++            // Put the selected tab at the primary edge when opening/changing the deck.
++            for (int i = 0; i < mModelList.size(); i++) {
++                PropertyModel model = mModelList.get(i).model;
++                if (TabProperties.isTabOrTabGroup(model) && model.get(TabProperties.IS_SELECTED)) {
++                    layoutManager.scrollToPositionWithOffset(i, 0);
++                    break;
++                }
++            }
+         }
+         if (layoutManager.setCardHeight(cardHeightPx)) {
+             mRecyclerView.invalidateItemDecorations();
+@@ -738,6 +797,50 @@
+         }
+     }
+ 
++    private void updateCardSnapHelper(boolean horizontal, TabCardLayoutManager manager) {
++        if (!horizontal) {
++            if (mCardSnapHelper != null) {
++                mCardSnapHelper.attachToRecyclerView(null);
++                mCardSnapHelper = null;
++            }
++            return;
++        }
++        if (mCardSnapHelper != null) return;
++        mCardSnapHelper =
++                new LinearSnapHelper() {
++                    @Override
++                    public int[] calculateDistanceToFinalSnap(
++                            RecyclerView.LayoutManager layout, View target) {
++                        int dx =
++                                manager.isRightHanded()
++                                        ? manager.getDecoratedRight(target)
++                                                - layout.getWidth()
++                                                + layout.getPaddingRight()
++                                        : manager.getDecoratedLeft(target)
++                                                - layout.getPaddingLeft();
++                        return new int[] {dx, 0};
++                    }
++
++                    @Override
++                    public @Nullable View findSnapView(RecyclerView.LayoutManager layout) {
++                        View nearest = null;
++                        int distance = Integer.MAX_VALUE;
++                        for (int i = 0; i < layout.getChildCount(); i++) {
++                            View child = layout.getChildAt(i);
++                            if (child == null) continue;
++                            int candidate =
++                                    Math.abs(calculateDistanceToFinalSnap(layout, child)[0]);
++                            if (candidate < distance) {
++                                nearest = child;
++                                distance = candidate;
++                            }
++                        }
++                        return nearest;
++                    }
++                };
++        mCardSnapHelper.attachToRecyclerView(mRecyclerView);
++    }
++
+     /**
+      * @see TabListMediator#getPriceWelcomeMessageInsertionIndex().
+      */
+@@ -871,6 +974,10 @@
+         }
+         if (mItemTouchHelper != null) {
+             mItemTouchHelper.attachToRecyclerView(null);
++        }
++        if (mCardSnapHelper != null) {
++            mCardSnapHelper.attachToRecyclerView(null);
++            mCardSnapHelper = null;
+         }
+         if (mOnAfterItemTouchHelperItemTouchListener != null) {
+             mRecyclerView.removeOnItemTouchListener(mOnAfterItemTouchHelperItemTouchListener);
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java
+index 43b66a1071c7e76433433592261ce4c9b1bb03e5..108d54888c40368249930bafc3ea4725148113f1 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabsSettings.java
+@@ -11,8 +11,8 @@
+ import android.view.View;
+ 
+ import androidx.annotation.VisibleForTesting;
++import androidx.preference.ListPreference;
+ import androidx.preference.Preference;
+-import androidx.preference.ListPreference;
+ 
+ import org.chromium.base.metrics.RecordHistogram;
+ import org.chromium.base.supplier.MonotonicObservableSupplier;
+@@ -103,19 +103,47 @@
+ 
+     private void configureTabSwitcherLayout() {
+         ListPreference preference = assertNonNull(findPreference("tab_switcher_layout"));
+-        preference.setEntries(new CharSequence[] {
+-                getString(R.string.titanium_tab_layout_grid),
+-                getString(R.string.titanium_tab_layout_cards)});
+-        preference.setEntryValues(new CharSequence[] {"0", "1"});
++        preference.setEntries(
++                new CharSequence[] {
++                    getString(R.string.titanium_tab_layout_grid),
++                    getString(R.string.titanium_tab_layout_cards),
++                    getString(R.string.titanium_tab_layout_horizontal_cards)
++                });
++        preference.setEntryValues(new CharSequence[] {"0", "1", "2"});
+         preference.setValue(Integer.toString(ChromeSharedPreferences.getInstance().readInt(
+                 ChromePreferenceKeys.TAB_SWITCHER_LAYOUT, 0)));
+         preference.setSummaryProvider(ListPreference.SimpleSummaryProvider.getInstance());
+-        preference.setOnPreferenceChangeListener((unused, value) -> {
+-            ChromeSharedPreferences.getInstance().writeInt(
+-                    ChromePreferenceKeys.TAB_SWITCHER_LAYOUT,
+-                    "1".equals(value) ? 1 : 0);
+-            return true;
+-        });
++        ListPreference handedness = assertNonNull(findPreference("tab_switcher_handedness"));
++        handedness.setEntries(
++                new CharSequence[] {
++                    getString(R.string.titanium_tab_right_handed),
++                    getString(R.string.titanium_tab_left_handed)
++                });
++        handedness.setEntryValues(new CharSequence[] {"0", "1"});
++        handedness.setValue(
++                ChromeSharedPreferences.getInstance()
++                                .readBoolean(ChromePreferenceKeys.TAB_SWITCHER_LEFT_HANDED, false)
++                        ? "1"
++                        : "0");
++        handedness.setSummaryProvider(ListPreference.SimpleSummaryProvider.getInstance());
++        handedness.setEnabled(!"1".equals(preference.getValue()));
++        handedness.setOnPreferenceChangeListener(
++                (unused, value) -> {
++                    ChromeSharedPreferences.getInstance()
++                            .writeBoolean(
++                                    ChromePreferenceKeys.TAB_SWITCHER_LEFT_HANDED,
++                                    "1".equals(value));
++                    return true;
++                });
++        preference.setOnPreferenceChangeListener(
++                (unused, value) -> {
++                    ChromeSharedPreferences.getInstance()
++                            .writeInt(
++                                    ChromePreferenceKeys.TAB_SWITCHER_LAYOUT,
++                                    Integer.parseInt(value.toString()));
++                    handedness.setEnabled(!"1".equals(value));
++                    return true;
++                });
+     }
+ 
+     private void configureAutoOpenSyncedTabGroupsSwitch() {
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java
+index 71eb295d539a3b3599994924d5c963c93d931844..9df31b0cc9bb9368129e4ce93eaadda8d815dcd5 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardCloseAnimationUnitTest.java
+@@ -6,6 +6,7 @@
+ 
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertNotNull;
++
+ import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_TYPE;
+ import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.TAB;
+ import static org.chromium.chrome.browser.tasks.tab_management.TabProperties.USE_SHRINK_CLOSE_ANIMATION;
+@@ -129,7 +130,10 @@
+         mIds.remove(position);
+         mView.getAdapter().notifyItemRemoved(position);
+         layout();
+-        assertEquals("Removal must use the closing tab's visible bounds", expected, animator.removalBounds);
++        assertEquals(
++                "Removal must use the closing tab's visible bounds",
++                expected,
++                animator.removalBounds);
+         animator.runPendingAnimations();
+         assertEquals("Shrink must start at the closing tab", expected, animator.startingBounds);
+         animator.endAnimations();
+@@ -162,4 +166,24 @@
+         closeAndCheck(0);
+         closeAndCheck(0);
+     }
++
++    @Test
++    public void horizontalCardsClosePrimary() {
++        populate(5, false, true);
++        mManager.setSpanCount(1);
++        mManager.setPresentation(TabCardLayoutManager.HORIZONTAL_CARDS, true, true);
++        mView.invalidateItemDecorations();
++        layout();
++        closeAndCheck(0);
++    }
++
++    @Test
++    public void leftHandedHorizontalCardsClosePrimary() {
++        populate(5, false, true);
++        mManager.setSpanCount(1);
++        mManager.setPresentation(TabCardLayoutManager.HORIZONTAL_CARDS, true, false);
++        mView.invalidateItemDecorations();
++        layout();
++        closeAndCheck(0);
++    }
+ }
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+index 6b3d015ca5a57b15d1aa30ea58931590da95b8f9..d9c5e9fe18397269b1141ab06ee31e68e8427ffe 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+@@ -32,6 +32,10 @@
+     private RecyclerView mView;
+     private TabCardLayoutManager mManager;
+     private int mCount;
++    private int mItemWidth = ViewGroup.LayoutParams.MATCH_PARENT;
++    private int mItemHeight = 400;
++    private int mViewportWidth = 360;
++    private boolean mStartHorizontalAtLastTab;
+ 
+     @Before
+     public void setUp() {
+@@ -42,34 +46,46 @@
+         mView.setLayoutManager(mManager);
+         mView.setItemAnimator(null);
+         mView.addItemDecoration(mManager.getOverlapDecoration(position -> true));
+-        mView.setAdapter(new RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+-            @Override
+-            public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int type) {
+-                TextView view = new TextView(mActivity);
+-                view.setLayoutParams(new RecyclerView.LayoutParams(
+-                        ViewGroup.LayoutParams.MATCH_PARENT, 400));
+-                return new RecyclerView.ViewHolder(view) {};
+-            }
+-
+-            @Override
+-            public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+-                ((TextView) holder.itemView).setText("Tab " + position);
+-            }
+-
+-            @Override
+-            public int getItemCount() {
+-                return mCount;
+-            }
+-        });
++        mView.setAdapter(
++                new RecyclerView.Adapter<RecyclerView.ViewHolder>() {
++                    @Override
++                    public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int type) {
++                        TextView view = new TextView(mActivity);
++                        view.setLayoutParams(
++                                new RecyclerView.LayoutParams(mItemWidth, mItemHeight));
++                        return new RecyclerView.ViewHolder(view) {};
++                    }
++
++                    @Override
++                    public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
++                        ((TextView) holder.itemView).setText("Tab " + position);
++                        ViewGroup.LayoutParams params = holder.itemView.getLayoutParams();
++                        if (params.width != mItemWidth || params.height != mItemHeight) {
++                            params.width = mItemWidth;
++                            params.height = mItemHeight;
++                            holder.itemView.setLayoutParams(params);
++                        }
++                    }
++
++                    @Override
++                    public int getItemCount() {
++                        return mCount;
++                    }
++                });
+         mActivity.setContentView(mView);
+     }
+ 
+     private void layout(int count, int height) {
+         mCount = count;
+         mView.getAdapter().notifyDataSetChanged();
+-        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++        if (mStartHorizontalAtLastTab && count > 0) {
++            mManager.scrollToPositionWithOffset(count - 1, 0);
++            mStartHorizontalAtLastTab = false;
++        }
++        mView.measure(
++                View.MeasureSpec.makeMeasureSpec(mViewportWidth, View.MeasureSpec.EXACTLY),
+                 View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+-        mView.layout(0, 0, 360, height);
++        mView.layout(0, 0, mViewportWidth, height);
+     }
+ 
+     @Test
+@@ -145,7 +161,8 @@
+         mCount = 2;
+         mView.getAdapter().notifyItemRemoved(1);
+         mView.requestLayout();
+-        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++        mView.measure(
++                View.MeasureSpec.makeMeasureSpec(mViewportWidth, View.MeasureSpec.EXACTLY),
+                 View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY));
+         mView.layout(0, 0, 360, 1000);
+         assertEquals(1000, mManager.findViewByPosition(1).getBottom());
+@@ -183,7 +200,8 @@
+         mCount = 2;
+         mView.getAdapter().notifyItemRemoved(2);
+         mView.requestLayout();
+-        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++        mView.measure(
++                View.MeasureSpec.makeMeasureSpec(mViewportWidth, View.MeasureSpec.EXACTLY),
+                 View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY));
+         mView.layout(0, 0, 360, 1000);
+         assertEquals(1000, mManager.findViewByPosition(1).getBottom());
+@@ -196,7 +214,8 @@
+         mCount = 2;
+         mView.getAdapter().notifyItemRemoved(0);
+         mView.requestLayout();
+-        mView.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
++        mView.measure(
++                View.MeasureSpec.makeMeasureSpec(mViewportWidth, View.MeasureSpec.EXACTLY),
+                 View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY));
+         mView.layout(0, 0, 360, 1000);
+         assertTrue(mManager.findViewByPosition(0).getTop() >= 0);
+@@ -315,4 +334,213 @@
+         assertEquals(180, mManager.findViewByPosition(0).getLeft());
+         assertEquals(0, mManager.findViewByPosition(0).getTop());
+     }
++
++    private void horizontalCards(boolean bottom, boolean rightHanded) {
++        mItemWidth = 270;
++        mItemHeight = 700;
++        mManager.setSpanCount(1);
++        mManager.setCardHeight(700);
++        mManager.setHorizontalGeometry(270, -1);
++        mStartHorizontalAtLastTab = true;
++        mManager.setPresentation(TabCardLayoutManager.HORIZONTAL_CARDS, bottom, rightHanded);
++    }
++
++    @Test
++    public void verticalCardsHaveTenPercentSideMargins() {
++        mManager.setPresentation(true, true);
++        layout(3, 1000);
++        View card = mManager.findViewByPosition(0);
++        assertEquals(36, card.getLeft());
++        assertEquals(324, card.getRight());
++        assertEquals(288, card.getWidth());
++    }
++
++    @Test
++    public void verticalDepartingCardFadesBeforeRecycling() {
++        mManager.setPresentation(true, true);
++        layout(10, 1000);
++        mView.scrollBy(0, 700);
++        // Moving toward earlier tabs pushes a retained card toward the bottom edge.
++        mView.scrollBy(0, -550);
++        boolean sawFadingCard = false;
++        for (int i = 0; i < mManager.getChildCount(); i++) {
++            View card = mManager.getChildAt(i);
++            if (card.getTop() > 650 && card.getTop() < 1000) {
++                assertTrue(card.getAlpha() > 0 && card.getAlpha() < 1);
++                sawFadingCard = true;
++            }
++        }
++        assertTrue(sawFadingCard);
++    }
++
++    @Test
++    public void horizontalPrimaryAndStackUseRequestedBounds() {
++        horizontalCards(true, true);
++        layout(10, 1000);
++        View primary = mManager.findViewByPosition(9);
++        View next = mManager.findViewByPosition(8);
++        assertEquals(270, primary.getWidth());
++        assertEquals(700, primary.getHeight());
++        assertEquals(360, primary.getRight());
++        assertEquals(1000, primary.getBottom());
++        assertEquals(1f, primary.getScaleY(), 0.001f);
++        assertEquals(0.975f, next.getScaleY(), 0.001f);
++        assertTrue(next.getX() < primary.getX());
++        assertTrue(next.getX() > primary.getX() - 40);
++        assertTrue(primary.getTranslationZ() > next.getTranslationZ());
++        assertFalse(mManager.canScrollVertically());
++        assertTrue(mManager.canScrollHorizontally());
++    }
++
++    @Test
++    public void horizontalTopModeCentersCardsVertically() {
++        horizontalCards(false, true);
++        mView.setPadding(0, 20, 0, 40);
++        layout(3, 1000);
++        View primary = mManager.findViewByPosition(2);
++        assertEquals(140, primary.getTop());
++        assertEquals(840, primary.getBottom());
++        assertEquals(350f, primary.getPivotY(), 0.001f);
++    }
++
++    @Test
++    public void horizontalSwipeRightFadesOutgoingAndGrowsOnlyIncoming() {
++        horizontalCards(true, true);
++        layout(10, 1000);
++        mView.scrollBy(-230, 0);
++        View outgoing = mManager.findViewByPosition(9);
++        View incoming = mManager.findViewByPosition(8);
++        assertEquals(1f, outgoing.getScaleY(), 0.001f);
++        assertTrue(outgoing.getAlpha() > 0 && outgoing.getAlpha() < 1);
++        assertTrue(outgoing.getX() > 300);
++        assertTrue(incoming.getScaleY() > 0.975f && incoming.getScaleY() < 1);
++        assertEquals(1f, incoming.getAlpha(), 0.001f);
++        mView.scrollBy(-40, 0);
++        assertEquals(90f, incoming.getX(), 0.01f);
++        assertEquals(1f, incoming.getScaleY(), 0.001f);
++        assertEquals(0f, outgoing.getAlpha(), 0.001f);
++        mView.scrollBy(270, 0);
++        assertEquals(90f, mManager.findViewByPosition(9).getX(), 0.01f);
++        assertEquals(1f, mManager.findViewByPosition(9).getAlpha(), 0.001f);
++    }
++
++    @Test
++    public void leftHandedHorizontalCardsMirrorTheDeckAndSwipe() {
++        horizontalCards(true, false);
++        layout(10, 1000);
++        View primary = mManager.findViewByPosition(9);
++        View next = mManager.findViewByPosition(8);
++        assertEquals(0, primary.getLeft());
++        assertTrue(next.getX() > primary.getX());
++        assertTrue(next.getX() < 40);
++        mView.scrollBy(230, 0);
++        assertTrue(primary.getX() < -200);
++        assertEquals(1f, primary.getScaleY(), 0.001f);
++        assertTrue(primary.getAlpha() > 0 && primary.getAlpha() < 1);
++        mView.scrollBy(40, 0);
++        assertEquals(0f, next.getX(), 0.01f);
++        assertEquals(1f, next.getScaleY(), 0.001f);
++    }
++
++    @Test
++    public void horizontalDeckCanReachBothEndsAndSelectedTab() {
++        horizontalCards(true, true);
++        layout(50, 1000);
++        mManager.scrollToPositionWithOffset(24, 400);
++        layout(50, 1000);
++        assertEquals(360, mManager.findViewByPosition(24).getRight());
++        mView.scrollToPosition(49);
++        layout(50, 1000);
++        assertTrue(mManager.findViewByPosition(49) != null);
++        mManager.scrollToPositionWithOffset(0, 0);
++        layout(50, 1000);
++        assertEquals(360, mManager.findViewByPosition(0).getRight());
++        assertTrue(mManager.getChildCount() < 15);
++    }
++
++    @Test
++    public void changingFromHorizontalRestoresGridTransformsAndDirection() {
++        horizontalCards(true, true);
++        layout(5, 1000);
++        mView.scrollBy(-120, 0);
++        mManager.setPresentation(TabCardLayoutManager.GRID, true, false);
++        mItemWidth = ViewGroup.LayoutParams.MATCH_PARENT;
++        mItemHeight = 400;
++        mManager.setSpanCount(2);
++        mManager.setCardHeight(400);
++        mView.invalidateItemDecorations();
++        layout(3, 1000);
++        mManager.scrollToPositionWithOffset(0, 0);
++        layout(3, 1000);
++        View primary = mManager.findViewByPosition(0);
++        assertEquals(0, primary.getLeft());
++        assertEquals(1000, primary.getBottom());
++        for (int i = 0; i < mManager.getChildCount(); i++) {
++            View card = mManager.getChildAt(i);
++            assertEquals(1f, card.getAlpha(), 0.001f);
++            assertEquals(1f, card.getScaleY(), 0.001f);
++            assertEquals(0f, card.getTranslationX(), 0.001f);
++            assertEquals(0f, card.getTranslationZ(), 0.001f);
++        }
++    }
++
++    @Test
++    public void gridHandednessMirrorsColumnsInTopAndBottomModes() {
++        mManager.setSpanCount(2);
++        mManager.setPresentation(TabCardLayoutManager.GRID, true, false);
++        layout(3, 1000);
++        assertEquals(0, mManager.findViewByPosition(0).getLeft());
++        assertEquals(180, mManager.findViewByPosition(1).getLeft());
++        assertEquals(0, mManager.findViewByPosition(2).getLeft());
++        assertEquals(1000, mManager.findViewByPosition(0).getBottom());
++        mManager.setPresentation(TabCardLayoutManager.GRID, false, true);
++        layout(3, 1000);
++        assertEquals(180, mManager.findViewByPosition(0).getLeft());
++        assertEquals(0, mManager.findViewByPosition(0).getTop());
++        mManager.setPresentation(TabCardLayoutManager.GRID, false, false);
++        layout(3, 1000);
++        assertEquals(0, mManager.findViewByPosition(0).getLeft());
++        assertEquals(0, mManager.findViewByPosition(0).getTop());
++    }
++
++    @Test
++    public void emptyAndSingleHorizontalDeckRemainStable() {
++        horizontalCards(true, true);
++        layout(0, 1000);
++        assertEquals(0, mManager.getChildCount());
++        layout(1, 1000);
++        mView.scrollBy(-600, 0);
++        assertEquals(90f, mManager.findViewByPosition(0).getX(), 0.001f);
++        assertEquals(1f, mManager.findViewByPosition(0).getAlpha(), 0.001f);
++    }
++
++    @Test
++    public void horizontalTopModeCanUseTheActualWindowCenter() {
++        horizontalCards(false, true);
++        mManager.setHorizontalGeometry(270, 420);
++        layout(3, 1000);
++        View primary = mManager.findViewByPosition(2);
++        assertEquals(70, primary.getTop());
++        assertEquals(770, primary.getBottom());
++    }
++
++    @Test
++    public void resizingHorizontalDeckKeepsThePrimaryCardAtItsEdge() {
++        horizontalCards(true, true);
++        layout(10, 1000);
++        mManager.scrollToPositionWithOffset(5, 0);
++        layout(10, 1000);
++        mViewportWidth = 600;
++        mItemWidth = 450;
++        mItemHeight = 420;
++        mManager.setHorizontalGeometry(450, -1);
++        mManager.setCardHeight(420);
++        layout(10, 600);
++        View primary = mManager.findViewByPosition(5);
++        assertEquals(600, primary.getRight());
++        assertEquals(600, primary.getBottom());
++        assertEquals(450, primary.getWidth());
++        assertEquals(420, primary.getHeight());
++        assertEquals(1f, primary.getScaleY(), 0.001f);
++    }
+ }
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
+index 3e841385baf4f095454b73fbd3c58a002f9eff8b..449b04ccdfd35340e618f3f89225b9e937484fbe 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
+@@ -1760,4 +1760,20 @@
+ 
+         assertFalse(listener.onInterceptTouchEvent(mRecyclerView, downEvent));
+     }
++
++    @Test
++    @Config(sdk = {29, 36})
++    public void horizontalDeckGesturesDoNotDismissTabs() {
++        setupItemTouchHelperCallback(false);
++        TabCardLayoutManager manager =
++                new TabCardLayoutManager(ContextUtils.getApplicationContext(), 1);
++        doReturn(manager).when(mRecyclerView).getLayoutManager();
++        manager.setPresentation(TabCardLayoutManager.HORIZONTAL_CARDS, true, true);
++        assertEquals(0, mItemTouchHelperCallback.getMovementFlags(mRecyclerView, mMockViewHolder1));
++        manager.setPresentation(TabCardLayoutManager.HORIZONTAL_CARDS, true, false);
++        assertEquals(0, mItemTouchHelperCallback.getMovementFlags(mRecyclerView, mMockViewHolder1));
++        manager.setPresentation(TabCardLayoutManager.VERTICAL_CARDS, true, true);
++        assertTrue(
++                mItemTouchHelperCallback.hasSwipeFlagForTesting(mRecyclerView, mMockViewHolder1));
++    }
+ }
+diff --git a/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java b/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
+index 0cdd0772fe6ef1a74d021be904ec66e21a2d076d..e8e81a962f2eaff6fb1074993d932045d976de0c 100644
+--- a/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
++++ b/chrome/browser/preferences/android/java/src/org/chromium/chrome/browser/preferences/ChromePreferenceKeys.java
+@@ -1066,8 +1066,10 @@
+     public static final String TIPS_NOTIFICATIONS_OPT_IN_PROMO_LAST_SHOWN_TIMESTAMP =
+             "Chrome.TipsNotifications.OptInLastShownTimestamp";
+ 
+-    /** 0 for the tab grid, 1 for overlapping tab cards. */
++    /** 0 for Grid, 1 for Vertical cards, 2 for Horizontal cards. */
+     public static final String TAB_SWITCHER_LAYOUT = "Chrome.Tabs.SwitcherLayout";
++
++    public static final String TAB_SWITCHER_LEFT_HANDED = "Chrome.Tabs.SwitcherLeftHanded";
+ 
+     // If the toolbar should be shown on top.
+     public static final String TOOLBAR_TOP_ANCHORED = "Chrome.Toolbar.TopAnchored";
+@@ -1368,6 +1370,7 @@
+                 TIPS_NOTIFICATIONS_OPT_IN_PROMO_SHOW_COUNT,
+                 TIPS_NOTIFICATIONS_OPT_IN_PROMO_LAST_SHOWN_TIMESTAMP,
+                 TAB_SWITCHER_LAYOUT,
++                TAB_SWITCHER_LEFT_HANDED,
+                 TOOLBAR_TOP_ANCHORED,
+                 TWA_DISCLOSURE_SEEN_PACKAGES,
+                 UI_OLED_BLACK_ENABLED,
+diff --git a/chrome/browser/ui/android/strings/android_chrome_strings.grd b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+index d662ef7b8924af768ef5967d6016eb117a312a18..4d11d93b5a4e5c45fc7b059a228bb5129b20ee04 100644
+--- a/chrome/browser/ui/android/strings/android_chrome_strings.grd
++++ b/chrome/browser/ui/android/strings/android_chrome_strings.grd
+@@ -216,7 +216,19 @@
+         Grid
+       </message>
+       <message name="IDS_TITANIUM_TAB_LAYOUT_CARDS" desc="Tab switcher layout with overlapping preview cards">
+-        Cards
++        Vertical cards
++      </message>
++      <message name="IDS_TITANIUM_TAB_LAYOUT_HORIZONTAL_CARDS" desc="Tab switcher layout with a horizontal deck of overlapping previews">
++        Horizontal cards
++      </message>
++      <message name="IDS_TITANIUM_TAB_HANDEDNESS_TITLE" desc="Hand preference for Grid and Horizontal cards">
++        Tab switcher handedness
++      </message>
++      <message name="IDS_TITANIUM_TAB_RIGHT_HANDED" desc="Place primary tabs on the right for right-handed use">
++        Right handed
++      </message>
++      <message name="IDS_TITANIUM_TAB_LEFT_HANDED" desc="Place primary tabs on the left for left-handed use">
++        Left handed
+       </message>
+       <message name="IDS_TITANIUM_OLED_BLACK_TITLE" desc="Appearance setting to use pure black browser surfaces">
+         OLED black backgrounds

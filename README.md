@@ -37,11 +37,16 @@ On phones, **Settings → Address bar → Bottom** keeps the address field above
 keyboard while editing, with suggestions growing upward. The tab switcher also
 places search at the bottom and its action controls directly above search.
 
-Choose **Settings → Tabs and tab groups → Tab switcher layout → Cards** for wide,
-overlapping tab previews. **Grid** remains the default. Both layouts keep short
-lists near the bottom when the address bar's Bottom setting is enabled.
-In Bottom mode, Grid fills from the bottom-right, moving left across each row
-and then upward, keeping the first tabs within right-thumb reach.
+Choose **Settings → Tabs and tab groups → Tab switcher layout** for **Grid**,
+**Vertical cards**, or **Horizontal cards**. Vertical cards have 10% margins on
+each side and fade smoothly as they leave the bottom of the screen. Horizontal
+cards form a fanned deck with a preview about 75% of the screen width and 70% of
+its height. Swipe through the deck; use a card's close button to close its tab.
+Horizontal cards sit above the bottom controls, or vertically centered in Top mode.
+
+**Tab switcher handedness** mirrors Grid and Horizontal cards for right- or
+left-handed use. Bottom/Grid fills across from the chosen side, then upward.
+Grid remains the default, and existing Cards users keep Vertical cards.
 
 See [implementation and validation notes](docs/bottom-ui.md) for build checks and
 the Android acceptance checklist.
