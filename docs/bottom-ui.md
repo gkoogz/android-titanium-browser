@@ -81,6 +81,8 @@ ancestor transforms and the complete thumbnail rather than a viewport-clipped
 rectangle. The animated bitmap interpolates to the same top-center fill crop used
 by the thumbnail, retaining its final transform until removal. A short blend at
 the end avoids a hard change between the page capture and cached preview.
+Thumbnail and container origins use the same screen coordinate system, including
+the window's status-bar offset. Fan transforms are reapplied after binding settles.
 
 ## Automated validation
 
@@ -129,10 +131,12 @@ margins, retained fading cards, horizontal size/depth/alpha, outgoing size stabi
 both hands, selected-tab positioning, window centering, resizing, empty/single/long
 decks and mode restoration. Horizontal swipes are checked to bypass tab dismissal.
 
-The page/thumbnail transition repair passed 134 geometry, bitmap-crop, provider,
+The page/thumbnail transition repair passed 138 geometry, bitmap-crop, provider,
 card-layout and real close-animation checks on API 29/36. It covers the reproduced
 240-pixel parent relayout, clipping, transformed ancestors, cancellation, matched
 tall-card crops, continuous bitmap scaling and final-frame transform retention.
+The additional checks cover window-origin normalization and restoring the fan
+after binding/item-animation callbacks alter presentation properties.
 
 ## Android acceptance before release
 

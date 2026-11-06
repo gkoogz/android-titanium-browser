@@ -1,0 +1,100 @@
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+index 0f009fb6ec5855820b46912a74635767305a5efd..463ee76ee3efd20679de5c2ce26fd40708896866 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+@@ -278,6 +278,13 @@
+         }
+     }
+ 
++    void prepareForTransition() {
++        // Binding/item-animation completion can reset presentation properties after layout.
++        // Reapply them once measured geometry is final, before taking the transition target.
++        if (mHorizontal) alignHorizontalCards();
++        updateCardTransforms();
++    }
++
+     private static float smoothUnit(float value) {
+         float t = Math.max(0, Math.min(1, value));
+         return t * t * (3 - 2 * t);
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
+index ac53767ef439d6b624825893312933cede44c3bc..5a90d19809ea249011de85e88c6f5ef476254f61 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabListCoordinator.java
+@@ -1139,6 +1139,9 @@
+                             mRecyclerView.findViewHolderForAdapterPosition(index);
+             if (holder == null) return;
+             assert assumeNonNull(holder.model) == mAwaitingModel;
++            if (mRecyclerView.getLayoutManager() instanceof TabCardLayoutManager manager) {
++                manager.prepareForTransition();
++            }
+             Runnable r = mAwaitingLayoutRunnable;
+             mAwaitingModel = null;
+             mAwaitingLayoutRunnable = null;
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherPaneBase.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherPaneBase.java
+index 21b8404320dfdca555e9bc9a09ff146973b09f8c..9b39e38046ce2aa8b48ddac9957da0bfa8ba46be 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherPaneBase.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherPaneBase.java
+@@ -444,8 +444,10 @@
+ 
+         Runnable provideAnimationData =
+                 () -> {
+-                    Rect hubRect = new Rect();
+-                    hubContainerView.getGlobalVisibleRect(hubRect);
++                    // Both the thumbnail and its animation container must use screen-space
++                    // bounds. getGlobalVisibleRect() uses a window/root coordinate space and
++                    // mixes in a status-bar offset when paired with transformMatrixToGlobal().
++                    Rect hubRect = TabSwitcherAnimationGeometry.getGlobalBounds(hubContainerView);
+                     Rect initialRect;
+                     Rect finalRect;
+                     Rect viewportRect = new Rect();
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+index d9c5e9fe18397269b1141ab06ee31e68e8427ffe..e7bb5b387b667cc8777bcd9360acbd5bc5e56f84 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+@@ -543,4 +543,24 @@
+         assertEquals(420, primary.getHeight());
+         assertEquals(1f, primary.getScaleY(), 0.001f);
+     }
++
++    @Test
++    public void transitionPreparationRestoresFanPropertiesAfterBinding() {
++        horizontalCards(true, true);
++        layout(5, 1000);
++        View primary = mManager.findViewByPosition(4);
++        View next = mManager.findViewByPosition(3);
++        next.setScaleY(1);
++        next.setPivotY(0);
++        next.setTranslationX(0);
++        mManager.prepareForTransition();
++        assertEquals(0.975f, next.getScaleY(), 0.001f);
++        assertEquals(700f, next.getPivotY(), 0.001f);
++        assertTrue(next.getX() < primary.getX());
++        assertTrue(next.getX() > primary.getX() - 40);
++        assertEquals(
++                primary.getTop() + 17.5f,
++                next.getTop() + next.getPivotY() * (1 - next.getScaleY()),
++                0.001f);
++    }
+ }
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometryUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometryUnitTest.java
+index 53f41318d0c1761c6907aa7958a43bfc5d868c4c..c847a8484ad079bbe3e4340014b04063a9fcc7bb 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometryUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabSwitcherAnimationGeometryUnitTest.java
+@@ -228,4 +228,17 @@
+             previous = scale;
+         }
+     }
++
++    @Test
++    public void screenSpaceContainerOriginIsSubtractedExactlyOnce() {
++        FrameLayout hub = new FrameLayout(mActivity);
++        mRoot.addView(hub, new FrameLayout.LayoutParams(500, 1000));
++        View thumbnail = addThumbnail(hub, 200, 400, 20, 240);
++        hub.setTranslationX(120);
++        hub.setTranslationY(96);
++        Rect bounds = TabSwitcherAnimationGeometry.getGlobalBounds(thumbnail);
++        Rect origin = TabSwitcherAnimationGeometry.getGlobalBounds(hub);
++        bounds.offset(-origin.left, -origin.top);
++        assertEquals(new Rect(20, 240, 220, 640), bounds);
++    }
+ }
