@@ -143,7 +143,7 @@ index f279bb506862fa25691a74abb74f9429ee08f3f1..98c443d7b6d78c136994b43940e97774
          return 0.f;
      }
 diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
-index 4587c700cd02bbc1aba2054de551f0b5b9334a07..d767983c1c63aee0e04106909c7fe0581ef16f68 100644
+index 4587c700cd02bbc1aba2054de551f0b5b9334a07..f6f37b92e730e15286387d5b93a540b64250575a 100644
 --- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
 +++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
 @@ -51,9 +51,9 @@
@@ -157,7 +157,7 @@ index 4587c700cd02bbc1aba2054de551f0b5b9334a07..d767983c1c63aee0e04106909c7fe058
  import org.chromium.components.tab_groups.TabGroupColorId;
  import org.chromium.components.tabs.TabAlert;
  import org.chromium.ui.modelutil.PropertyKey;
-@@ -501,8 +501,17 @@
+@@ -501,8 +501,18 @@
                  selectedOutline.setStroke(Math.max(1, Math.round(
                          2 * contentView.getResources().getDisplayMetrics().density)),
                          SemanticColorUtils.getColorPrimary(contentView.getContext()));
@@ -172,6 +172,7 @@ index 4587c700cd02bbc1aba2054de551f0b5b9334a07..d767983c1c63aee0e04106909c7fe058
 +                        contentView
 +                                .getResources()
 +                                .getDimensionPixelSize(R.dimen.tab_grid_card_margin);
++                foreground.setPaddingMode(LayerDrawable.PADDING_MODE_STACK);
 +                foreground.setLayerInset(1, inset, inset, inset, inset);
 +                contentView.setForeground(foreground);
              }
