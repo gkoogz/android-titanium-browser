@@ -91,7 +91,7 @@ index 463ee76ee3efd20679de5c2ce26fd40708896866..cf82dec3201b758492a3050eff6b1c30
                  float available = Math.max(1, getHeight() - getPaddingTop() - getPaddingBottom());
                  child.setAlpha(
 diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
-index f279bb506862fa25691a74abb74f9429ee08f3f1..98c443d7b6d78c136994b43940e977749cb99024 100644
+index f279bb506862fa25691a74abb74f9429ee08f3f1..8e684a5d8e1fb83b52cd98224edffa20d40cbc5e 100644
 --- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
 +++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
 @@ -190,8 +190,8 @@
@@ -105,7 +105,32 @@ index f279bb506862fa25691a74abb74f9429ee08f3f1..98c443d7b6d78c136994b43940e97774
          }
          final int dragFlags = isMessageType(viewHolder) ? 0 : mDragFlags;
          final int swipeFlags =
-@@ -451,7 +451,11 @@
+@@ -402,7 +402,12 @@
+ 
+     @Override
+     public void clearView(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder) {
++        float horizontalOffset = viewHolder.itemView.getTranslationX();
+         super.clearView(recyclerView, viewHolder);
++        if (recyclerView.getLayoutManager() instanceof TabCardLayoutManager manager
++                && manager.isHorizontalCards()) {
++            viewHolder.itemView.setTranslationX(horizontalOffset);
++        }
+         int prevActionState = mCurrentActionState;
+         mCurrentActionState = ItemTouchHelper.ACTION_STATE_IDLE;
+         if (prevActionState != ItemTouchHelper.ACTION_STATE_DRAG) return;
+@@ -446,12 +451,23 @@
+             float dY,
+             int actionState,
+             boolean isCurrentlyActive) {
++        float horizontalOffset = viewHolder.itemView.getTranslationX();
+         super.onChildDraw(c, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive);
++        if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE
++                && recyclerView.getLayoutManager() instanceof TabCardLayoutManager manager
++                && manager.isHorizontalCards()) {
++            // ItemTouchHelper owns vertical movement; retain the deck's horizontal fan.
++            viewHolder.itemView.setTranslationX(horizontalOffset);
++        }
+         if (Math.abs(dX) > 0 || Math.abs(dY) > 0) {
              mActionStarted = true;
          }
          if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE) {
@@ -118,7 +143,7 @@ index f279bb506862fa25691a74abb74f9429ee08f3f1..98c443d7b6d78c136994b43940e97774
  
              assert viewHolder instanceof SimpleRecyclerViewAdapter.ViewHolder;
  
-@@ -475,7 +479,7 @@
+@@ -475,7 +491,7 @@
              if (cardModel == null) return;
  
              cardModel.set(TabListModel.CardProperties.CARD_ALPHA, alpha);
@@ -127,7 +152,7 @@ index f279bb506862fa25691a74abb74f9429ee08f3f1..98c443d7b6d78c136994b43940e97774
              if (isOverSwipeThreshold && !mIsSwipingToDismiss) {
                  viewHolder.itemView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
              }
-@@ -570,7 +574,13 @@
+@@ -570,7 +586,13 @@
      public float getSwipeThreshold(RecyclerView.ViewHolder viewHolder) {
          @Nullable RecyclerView recyclerView = mRecyclerViewSupplier.get();
          if (recyclerView != null) {
@@ -299,10 +324,10 @@ index e7bb5b387b667cc8777bcd9360acbd5bc5e56f84..ac96fadae21305b351d0fff0a7a33a6f
 +    }
  }
 diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
-index 449b04ccdfd35340e618f3f89225b9e937484fbe..7162c218cc3e2adfff83c1a510024c5caba229e9 100644
+index 449b04ccdfd35340e618f3f89225b9e937484fbe..ed4942e8f9dd30aa5ae986a631777b9c8403fddb 100644
 --- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
 +++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
-@@ -1763,17 +1763,47 @@
+@@ -1763,17 +1763,51 @@
  
      @Test
      @Config(sdk = {29, 36})
@@ -340,6 +365,7 @@ index 449b04ccdfd35340e618f3f89225b9e937484fbe..7162c218cc3e2adfff83c1a510024c5c
 +                THRESHOLD / 1000f,
 +                mItemTouchHelperCallback.getSwipeThreshold(mMockViewHolder1),
 +                0.001f);
++        doReturn(42f).when(mItemView1).getTranslationX();
 +        mItemTouchHelperCallback.onChildDraw(
 +                mCanvas,
 +                mRecyclerView,
@@ -349,6 +375,9 @@ index 449b04ccdfd35340e618f3f89225b9e937484fbe..7162c218cc3e2adfff83c1a510024c5c
 +                ItemTouchHelper.ACTION_STATE_SWIPE,
 +                true);
 +        assertEquals(0.6f, mModel.get(0).model.get(CARD_ALPHA), 0.001f);
++        verify(mItemView1).setTranslationX(42f);
++        mItemTouchHelperCallback.clearView(mRecyclerView, mMockViewHolder1);
++        verify(mItemView1, times(2)).setTranslationX(42f);
 +        mItemTouchHelperCallback.onSwiped(mMockViewHolder1, ItemTouchHelper.UP);
 +        verify(mTabClosedListener).run(mItemView1, TAB1_ID, /* triggeringMotion= */ null);
 +    }
