@@ -18,9 +18,11 @@ This fork extends two existing settings on phones:
   Horizontal cards form a fanned deck, with the primary preview about 75% of the
   screen width and 70% of its height. The primary card sits above the bottom
   action controls, or vertically centered when Top controls are selected.
-  Swiping browses the deck; the departing card keeps its size and fades near
-  the edge, while the next card slides in and grows slightly in height.
-  Use the close button to close a tab in Horizontal cards.
+  Horizontal swipes browse the deck. The primary spot sits 5% inward from
+  the chosen edge, exposing a sliver of the next tab above it in the stack.
+  Tabs on that side slide horizontally at full height and remain opaque; tabs
+  behind the primary card shrink slightly in height. Swipe upward or use the
+  close button to close a tab in Horizontal cards.
   Tab identity, thumbnails,
   close actions, groups and transition animations use the existing tab model and
   views. The preference is independent of address-bar placement and changes the
@@ -65,8 +67,10 @@ and the overlapping Vertical cards layout retain their existing vertical orderin
 Horizontal cards use one horizontal span, edge snapping and transformed previews
 with a small height reduction behind the primary card. Extra layout space keeps
 overlapping previews attached until they finish fading. Switching modes clears
-the preview transforms. Horizontal deck gestures bypass swipe-to-close so browsing
-cannot accidentally dismiss a tab; close buttons retain the existing close action.
+the preview transforms. Horizontal browsing gestures retain their scroll behavior;
+only upward swipes dismiss cards, with vertical distance driving opacity, haptic
+feedback and the dismissal threshold. The OLED selection outline and keyboard
+focus rings follow the rendered card bounds without a transparent inner gap.
 
 The home page puts its fake search field after the other page elements and fills
 short pages to the scroll viewport, using bottom gravity. It retains status-bar
@@ -182,7 +186,8 @@ configuration.
    The disappearing preview must shrink at the position of the actual closed tab,
    including the second grid column and when a removal changes the number of rows.
    For Horizontal cards, check the active preview, fan depth, height growth,
-   outgoing fade, edge snap, both swipe directions and the close button. Change
+   full-height outgoing sliver, inset snap, both horizontal swipe directions,
+   upward close, cancelled upward swipes, undo and the close button. Change
    handedness and confirm the deck and Grid mirror without mirroring tab text.
 5. Restore Address bar → Top and Grid. Check TalkBack, keyboard navigation and large
    text. Compare tablet, automotive and XR behavior with the upstream build.

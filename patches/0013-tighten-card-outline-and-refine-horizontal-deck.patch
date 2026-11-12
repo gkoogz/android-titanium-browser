@@ -1,0 +1,354 @@
+diff --git a/chrome/android/features/tab_ui/java/res/drawable/tab_grid_focus_ring.xml b/chrome/android/features/tab_ui/java/res/drawable/tab_grid_focus_ring.xml
+index e936e21180eb68449342c77cc5924562b49afd07..3ce0753a0e525781e52e83dfb1153e31c2030bb2 100644
+--- a/chrome/android/features/tab_ui/java/res/drawable/tab_grid_focus_ring.xml
++++ b/chrome/android/features/tab_ui/java/res/drawable/tab_grid_focus_ring.xml
+@@ -7,12 +7,12 @@
+ <selector xmlns:android="http://schemas.android.com/apk/res/android">
+   <item android:state_focused="true">
+     <inset
+-      android:insetLeft="@dimen/tab_grid_focus_ring_inset"
+-      android:insetTop="@dimen/tab_grid_focus_ring_inset"
+-      android:insetRight="@dimen/tab_grid_focus_ring_inset"
+-      android:insetBottom="@dimen/tab_grid_focus_ring_inset">
++      android:insetLeft="@dimen/tab_grid_card_margin"
++      android:insetTop="@dimen/tab_grid_card_margin"
++      android:insetRight="@dimen/tab_grid_card_margin"
++      android:insetBottom="@dimen/tab_grid_card_margin">
+       <shape android:shape="rectangle">
+-        <corners android:radius="28dp" />
++        <corners android:radius="@dimen/tab_grid_card_bg_radius" />
+         <stroke android:width="2dp" android:color="?attr/colorPrimary" />
+         <solid android:color="@android:color/transparent" />
+       </shape>
+diff --git a/chrome/android/features/tab_ui/java/res/drawable/tab_grid_focus_ring_incognito.xml b/chrome/android/features/tab_ui/java/res/drawable/tab_grid_focus_ring_incognito.xml
+index 709e08dda4cb2acb285abc07de3cb01540771c22..6a97c4901ad37b2399c0ca1ebe9eeeccd441ed86 100644
+--- a/chrome/android/features/tab_ui/java/res/drawable/tab_grid_focus_ring_incognito.xml
++++ b/chrome/android/features/tab_ui/java/res/drawable/tab_grid_focus_ring_incognito.xml
+@@ -7,12 +7,12 @@
+ <selector xmlns:android="http://schemas.android.com/apk/res/android">
+   <item android:state_focused="true">
+     <inset
+-      android:insetLeft="@dimen/tab_grid_focus_ring_inset"
+-      android:insetTop="@dimen/tab_grid_focus_ring_inset"
+-      android:insetRight="@dimen/tab_grid_focus_ring_inset"
+-      android:insetBottom="@dimen/tab_grid_focus_ring_inset">
++      android:insetLeft="@dimen/tab_grid_card_margin"
++      android:insetTop="@dimen/tab_grid_card_margin"
++      android:insetRight="@dimen/tab_grid_card_margin"
++      android:insetBottom="@dimen/tab_grid_card_margin">
+       <shape android:shape="rectangle">
+-        <corners android:radius="28dp" />
++        <corners android:radius="@dimen/tab_grid_card_bg_radius" />
+         <stroke android:width="2dp" android:color="@color/baseline_neutral_90" />
+         <solid android:color="@android:color/transparent" />
+       </shape>
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+index 463ee76ee3efd20679de5c2ce26fd40708896866..cf82dec3201b758492a3050eff6b1c30e00a5334 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
+@@ -98,16 +98,29 @@
+         return Math.max(0, available - width);
+     }
+ 
++    private int horizontalEdgeInset() {
++        return Math.round((getWidth() - super.getPaddingLeft() - super.getPaddingRight()) * 0.05f);
++    }
++
+     @Override
+     public int getPaddingLeft() {
+-        // Reserve the empty quarter beside the final card so even a one-tab deck
+-        // stays on its chosen edge. clipToPadding=false still exposes the fan here.
+-        return super.getPaddingLeft() + (mHorizontal && mRightHanded ? horizontalSideInset() : 0);
++        // Keep a five-percent sliver on the departure side and the fan on the other side.
++        return super.getPaddingLeft()
++                + (mHorizontal
++                        ? (mRightHanded
++                                ? horizontalSideInset() - horizontalEdgeInset()
++                                : horizontalEdgeInset())
++                        : 0);
+     }
+ 
+     @Override
+     public int getPaddingRight() {
+-        return super.getPaddingRight() + (mHorizontal && !mRightHanded ? horizontalSideInset() : 0);
++        return super.getPaddingRight()
++                + (mHorizontal
++                        ? (mRightHanded
++                                ? horizontalEdgeInset()
++                                : horizontalSideInset() - horizontalEdgeInset())
++                        : 0);
+     }
+ 
+     @Override
+@@ -315,7 +328,8 @@
+                 child.setTranslationZ(
+                         (5 - Math.min(behind, 4))
+                                 * child.getResources().getDisplayMetrics().density);
+-                child.setAlpha(depth < 0 ? smoothUnit((1 + depth) / 0.30f) : smoothUnit(4 - depth));
++                // Departed cards stay opaque while their full-height edge remains visible.
++                child.setAlpha(depth < 0 ? 1 : smoothUnit(4 - depth));
+             } else {
+                 float available = Math.max(1, getHeight() - getPaddingTop() - getPaddingBottom());
+                 child.setAlpha(
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
+index f279bb506862fa25691a74abb74f9429ee08f3f1..98c443d7b6d78c136994b43940e977749cb99024 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallback.java
+@@ -190,8 +190,8 @@
+     public int getMovementFlags(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder) {
+         if (recyclerView.getLayoutManager() instanceof TabCardLayoutManager manager
+                 && manager.isHorizontalCards()) {
+-            // Horizontal swipes browse the deck. Closing remains an explicit card action.
+-            return makeMovementFlags(0, 0);
++            // Horizontal swipes browse; an upward toss closes a swipeable tab.
++            return makeMovementFlags(0, isSwipeable(viewHolder) ? ItemTouchHelper.UP : 0);
+         }
+         final int dragFlags = isMessageType(viewHolder) ? 0 : mDragFlags;
+         final int swipeFlags =
+@@ -451,7 +451,11 @@
+             mActionStarted = true;
+         }
+         if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE) {
+-            float alpha = Math.max(0.2f, 1f - 0.8f * Math.abs(dX) / mSwipeToDismissThreshold);
++            boolean horizontalCards =
++                    recyclerView.getLayoutManager() instanceof TabCardLayoutManager manager
++                            && manager.isHorizontalCards();
++            float distance = Math.abs(horizontalCards ? dY : dX);
++            float alpha = Math.max(0.2f, 1f - 0.8f * distance / mSwipeToDismissThreshold);
+ 
+             assert viewHolder instanceof SimpleRecyclerViewAdapter.ViewHolder;
+ 
+@@ -475,7 +479,7 @@
+             if (cardModel == null) return;
+ 
+             cardModel.set(TabListModel.CardProperties.CARD_ALPHA, alpha);
+-            boolean isOverSwipeThreshold = Math.abs(dX) >= mSwipeToDismissThreshold;
++            boolean isOverSwipeThreshold = distance >= mSwipeToDismissThreshold;
+             if (isOverSwipeThreshold && !mIsSwipingToDismiss) {
+                 viewHolder.itemView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+             }
+@@ -570,7 +574,13 @@
+     public float getSwipeThreshold(RecyclerView.ViewHolder viewHolder) {
+         @Nullable RecyclerView recyclerView = mRecyclerViewSupplier.get();
+         if (recyclerView != null) {
+-            return mSwipeToDismissThreshold / recyclerView.getWidth();
++            boolean horizontalCards =
++                    recyclerView.getLayoutManager() instanceof TabCardLayoutManager manager
++                            && manager.isHorizontalCards();
++            return mSwipeToDismissThreshold
++                    / Math.max(
++                            1,
++                            horizontalCards ? recyclerView.getHeight() : recyclerView.getWidth());
+         }
+         return 0.f;
+     }
+diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
+index 4587c700cd02bbc1aba2054de551f0b5b9334a07..d767983c1c63aee0e04106909c7fe0581ef16f68 100644
+--- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
++++ b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabGridViewBinder.java
+@@ -51,9 +51,9 @@
+ import org.chromium.chrome.browser.tasks.tab_management.labels.TabCardLabelType;
+ import org.chromium.chrome.browser.tasks.tab_management.labels.TabCardLabelView;
+ import org.chromium.chrome.tab_ui.R;
+-import org.chromium.components.browser_ui.util.TextResolver;
+ import org.chromium.components.browser_ui.styles.OledBlackTheme;
+ import org.chromium.components.browser_ui.styles.SemanticColorUtils;
++import org.chromium.components.browser_ui.util.TextResolver;
+ import org.chromium.components.tab_groups.TabGroupColorId;
+ import org.chromium.components.tabs.TabAlert;
+ import org.chromium.ui.modelutil.PropertyKey;
+@@ -501,8 +501,17 @@
+                 selectedOutline.setStroke(Math.max(1, Math.round(
+                         2 * contentView.getResources().getDisplayMetrics().density)),
+                         SemanticColorUtils.getColorPrimary(contentView.getContext()));
+-                contentView.setForeground(new LayerDrawable(new Drawable[] {
+-                        assertNonNull(contentView.getForeground()), selectedOutline}));
++                LayerDrawable foreground =
++                        new LayerDrawable(
++                                new Drawable[] {
++                                    assertNonNull(contentView.getForeground()), selectedOutline
++                                });
++                int inset =
++                        contentView
++                                .getResources()
++                                .getDimensionPixelSize(R.dimen.tab_grid_card_margin);
++                foreground.setLayerInset(1, inset, inset, inset, inset);
++                contentView.setForeground(foreground);
+             }
+         }
+     }
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+index e7bb5b387b667cc8777bcd9360acbd5bc5e56f84..ac96fadae21305b351d0fff0a7a33a6f2dbe1be0 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManagerUnitTest.java
+@@ -381,7 +381,7 @@
+         View next = mManager.findViewByPosition(8);
+         assertEquals(270, primary.getWidth());
+         assertEquals(700, primary.getHeight());
+-        assertEquals(360, primary.getRight());
++        assertEquals(342, primary.getRight());
+         assertEquals(1000, primary.getBottom());
+         assertEquals(1f, primary.getScaleY(), 0.001f);
+         assertEquals(0.975f, next.getScaleY(), 0.001f);
+@@ -404,23 +404,23 @@
+     }
+ 
+     @Test
+-    public void horizontalSwipeRightFadesOutgoingAndGrowsOnlyIncoming() {
++    public void horizontalSwipeKeepsOutgoingOpaqueAndGrowsOnlyIncoming() {
+         horizontalCards(true, true);
+         layout(10, 1000);
+         mView.scrollBy(-230, 0);
+         View outgoing = mManager.findViewByPosition(9);
+         View incoming = mManager.findViewByPosition(8);
+         assertEquals(1f, outgoing.getScaleY(), 0.001f);
+-        assertTrue(outgoing.getAlpha() > 0 && outgoing.getAlpha() < 1);
++        assertTrue(outgoing.getAlpha() == 1);
+         assertTrue(outgoing.getX() > 300);
+         assertTrue(incoming.getScaleY() > 0.975f && incoming.getScaleY() < 1);
+         assertEquals(1f, incoming.getAlpha(), 0.001f);
+         mView.scrollBy(-40, 0);
+-        assertEquals(90f, incoming.getX(), 0.01f);
++        assertEquals(72f, incoming.getX(), 0.01f);
+         assertEquals(1f, incoming.getScaleY(), 0.001f);
+-        assertEquals(0f, outgoing.getAlpha(), 0.001f);
++        assertEquals(1f, outgoing.getAlpha(), 0.001f);
+         mView.scrollBy(270, 0);
+-        assertEquals(90f, mManager.findViewByPosition(9).getX(), 0.01f);
++        assertEquals(72f, mManager.findViewByPosition(9).getX(), 0.01f);
+         assertEquals(1f, mManager.findViewByPosition(9).getAlpha(), 0.001f);
+     }
+ 
+@@ -430,15 +430,15 @@
+         layout(10, 1000);
+         View primary = mManager.findViewByPosition(9);
+         View next = mManager.findViewByPosition(8);
+-        assertEquals(0, primary.getLeft());
++        assertEquals(18, primary.getLeft());
+         assertTrue(next.getX() > primary.getX());
+-        assertTrue(next.getX() < 40);
++        assertTrue(next.getX() < primary.getX() + 40);
+         mView.scrollBy(230, 0);
+         assertTrue(primary.getX() < -200);
+         assertEquals(1f, primary.getScaleY(), 0.001f);
+-        assertTrue(primary.getAlpha() > 0 && primary.getAlpha() < 1);
++        assertTrue(primary.getAlpha() == 1);
+         mView.scrollBy(40, 0);
+-        assertEquals(0f, next.getX(), 0.01f);
++        assertEquals(18f, next.getX(), 0.01f);
+         assertEquals(1f, next.getScaleY(), 0.001f);
+     }
+ 
+@@ -448,13 +448,13 @@
+         layout(50, 1000);
+         mManager.scrollToPositionWithOffset(24, 400);
+         layout(50, 1000);
+-        assertEquals(360, mManager.findViewByPosition(24).getRight());
++        assertEquals(342, mManager.findViewByPosition(24).getRight());
+         mView.scrollToPosition(49);
+         layout(50, 1000);
+         assertTrue(mManager.findViewByPosition(49) != null);
+         mManager.scrollToPositionWithOffset(0, 0);
+         layout(50, 1000);
+-        assertEquals(360, mManager.findViewByPosition(0).getRight());
++        assertEquals(342, mManager.findViewByPosition(0).getRight());
+         assertTrue(mManager.getChildCount() < 15);
+     }
+ 
+@@ -510,7 +510,7 @@
+         assertEquals(0, mManager.getChildCount());
+         layout(1, 1000);
+         mView.scrollBy(-600, 0);
+-        assertEquals(90f, mManager.findViewByPosition(0).getX(), 0.001f);
++        assertEquals(72f, mManager.findViewByPosition(0).getX(), 0.001f);
+         assertEquals(1f, mManager.findViewByPosition(0).getAlpha(), 0.001f);
+     }
+ 
+@@ -537,7 +537,7 @@
+         mManager.setCardHeight(420);
+         layout(10, 600);
+         View primary = mManager.findViewByPosition(5);
+-        assertEquals(600, primary.getRight());
++        assertEquals(570, primary.getRight());
+         assertEquals(600, primary.getBottom());
+         assertEquals(450, primary.getWidth());
+         assertEquals(420, primary.getHeight());
+@@ -563,4 +563,23 @@
+                 next.getTop() + next.getPivotY() * (1 - next.getScaleY()),
+                 0.001f);
+     }
++
++    @Test
++    public void departedTabShowsFullHeightSliverOnEitherSide() {
++        for (boolean rightHanded : new boolean[] {true, false}) {
++            horizontalCards(true, rightHanded);
++            layout(10, 1000);
++            mManager.scrollToPositionWithOffset(5, 0);
++            layout(10, 1000);
++            View primary = mManager.findViewByPosition(5);
++            View departed = mManager.findViewByPosition(6);
++            assertEquals(1f, departed.getScaleY(), 0.001f);
++            assertEquals(1f, departed.getAlpha(), 0.001f);
++            assertEquals(primary.getY(), departed.getY(), 0.001f);
++            if (rightHanded) assertEquals(342f, departed.getX(), 0.001f);
++            else assertEquals(18f, departed.getX() + departed.getWidth(), 0.001f);
++            mView.scrollBy(rightHanded ? 135 : -135, 0);
++            assertEquals(1f, departed.getScaleY(), 0.001f);
++        }
++    }
+ }
+diff --git a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
+index 449b04ccdfd35340e618f3f89225b9e937484fbe..7162c218cc3e2adfff83c1a510024c5caba229e9 100644
+--- a/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
++++ b/chrome/android/features/tab_ui/junit/src/org/chromium/chrome/browser/tasks/tab_management/TabGridItemTouchHelperCallbackUnitTest.java
+@@ -1763,17 +1763,47 @@
+ 
+     @Test
+     @Config(sdk = {29, 36})
+-    public void horizontalDeckGesturesDoNotDismissTabs() {
++    public void horizontalDeckOnlyUpwardGesturesDismissTabs() {
+         setupItemTouchHelperCallback(false);
+         TabCardLayoutManager manager =
+                 new TabCardLayoutManager(ContextUtils.getApplicationContext(), 1);
+         doReturn(manager).when(mRecyclerView).getLayoutManager();
+         manager.setPresentation(TabCardLayoutManager.HORIZONTAL_CARDS, true, true);
+-        assertEquals(0, mItemTouchHelperCallback.getMovementFlags(mRecyclerView, mMockViewHolder1));
++        assertEquals(
++                ItemTouchHelper.Callback.makeMovementFlags(0, ItemTouchHelper.UP),
++                mItemTouchHelperCallback.getMovementFlags(mRecyclerView, mMockViewHolder1));
+         manager.setPresentation(TabCardLayoutManager.HORIZONTAL_CARDS, true, false);
+-        assertEquals(0, mItemTouchHelperCallback.getMovementFlags(mRecyclerView, mMockViewHolder1));
++        assertEquals(
++                ItemTouchHelper.Callback.makeMovementFlags(0, ItemTouchHelper.UP),
++                mItemTouchHelperCallback.getMovementFlags(mRecyclerView, mMockViewHolder1));
+         manager.setPresentation(TabCardLayoutManager.VERTICAL_CARDS, true, true);
+         assertTrue(
+                 mItemTouchHelperCallback.hasSwipeFlagForTesting(mRecyclerView, mMockViewHolder1));
+     }
++
++    @Test
++    @Config(sdk = {29, 36})
++    public void upwardSwipeUsesVerticalDistanceAndHeight() {
++        setupItemTouchHelperCallback(false);
++        TabCardLayoutManager manager =
++                new TabCardLayoutManager(ContextUtils.getApplicationContext(), 1);
++        manager.setPresentation(TabCardLayoutManager.HORIZONTAL_CARDS, true, true);
++        doReturn(manager).when(mRecyclerView).getLayoutManager();
++        doReturn(1000).when(mRecyclerView).getHeight();
++        assertEquals(
++                THRESHOLD / 1000f,
++                mItemTouchHelperCallback.getSwipeThreshold(mMockViewHolder1),
++                0.001f);
++        mItemTouchHelperCallback.onChildDraw(
++                mCanvas,
++                mRecyclerView,
++                mMockViewHolder1,
++                0,
++                -THRESHOLD / 2f,
++                ItemTouchHelper.ACTION_STATE_SWIPE,
++                true);
++        assertEquals(0.6f, mModel.get(0).model.get(CARD_ALPHA), 0.001f);
++        mItemTouchHelperCallback.onSwiped(mMockViewHolder1, ItemTouchHelper.UP);
++        verify(mTabClosedListener).run(mItemView1, TAB1_ID, /* triggeringMotion= */ null);
++    }
+ }
