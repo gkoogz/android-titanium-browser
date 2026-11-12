@@ -42,6 +42,18 @@ index 709e08dda4cb2acb285abc07de3cb01540771c22..6a97c4901ad37b2399c0ca1ebe9eeecc
          <stroke android:width="2dp" android:color="@color/baseline_neutral_90" />
          <solid android:color="@android:color/transparent" />
        </shape>
+diff --git a/chrome/android/features/tab_ui/java/res/values/dimens.xml b/chrome/android/features/tab_ui/java/res/values/dimens.xml
+index 761aaa27799852cb296e9d62bfa477fa2c5ec36a..88cf1a0f78b85c8f8c54f0249b1753bf36628de7 100644
+--- a/chrome/android/features/tab_ui/java/res/values/dimens.xml
++++ b/chrome/android/features/tab_ui/java/res/values/dimens.xml
+@@ -43,7 +43,6 @@
+     <dimen name="tab_grid_card_margin_wrapper">3dp</dimen>
+     <!-- The tab card highlight size is equal to tab_grid_card_margin - tab_grid_card_margin_wrapper -->
+     <dimen name="tab_grid_card_margin">8dp</dimen>
+-    <dimen name="tab_grid_focus_ring_inset">4dp</dimen>
+     <dimen name="tab_grid_card_title_fading_length">20dp</dimen>
+     <dimen name="tab_grid_card_title_end_margin">44dp</dimen>
+     <dimen name="tab_grid_card_alert_indicator_margin_end">1dp</dimen>
 diff --git a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java b/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
 index 463ee76ee3efd20679de5c2ce26fd40708896866..cf82dec3201b758492a3050eff6b1c30e00a5334 100644
 --- a/chrome/android/features/tab_ui/java/src/org/chromium/chrome/browser/tasks/tab_management/TabCardLayoutManager.java
